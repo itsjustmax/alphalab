@@ -1,0 +1,200 @@
+{
+  "slug": "alphalab",
+  "name": "AlphaLab",
+  "version": "1.0.0",
+  "context_keys": {
+    "topic": "what the desk is focused on right now",
+    "watchlist": "symbols under active attention",
+    "quotes/": "one key per symbol: the latest receipted quote",
+    "findings/": "one key per finding: evidence worth keeping, with its source clock",
+    "cases/": "one key per trade idea, named contract + thesis (e.g. 'AAPL 8/14 312.50C - long on supply-lid break'); value carries thesis, evidence keys, invalidation, state: idea|watching|open|closed",
+    "widgets/": "the desk: one declarative card per key (widgets convention)",
+    "widgets/brief": "the pinned Today card: what the desk is doing and what needs eyes"
+  },
+  "tools": [
+    {
+      "name": "capabilities",
+      "description": "Which lanes are live on this machine: inline public data always; the full engine (broker, options, gamma) when installed.",
+      "args": {},
+      "command": [
+        "python3",
+        "tools/run.py",
+        "capabilities"
+      ]
+    },
+    {
+      "name": "price_summary",
+      "description": "End-of-day price summary from public data \u2014 no keys, no accounts. Close, 1d/1m change, 30d range.",
+      "args": {
+        "symbol": "ticker or index, e.g. NVDA, SPX"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "price_summary"
+      ]
+    },
+    {
+      "name": "daily_bars",
+      "description": "Daily closes from public data for charting \u2014 points ready for a line card.",
+      "args": {
+        "symbol": "ticker or index",
+        "days": "how many trading days (default 60)"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "daily_bars"
+      ]
+    },
+    {
+      "name": "system_health",
+      "description": "Check the data engine: TWS, Timescale, integrations.",
+      "args": {},
+      "command": [
+        "python3",
+        "tools/run.py",
+        "system.health"
+      ]
+    },
+    {
+      "name": "quote_snapshot",
+      "description": "One receipted IBKR quote: bid/ask/last/mark with source clocks.",
+      "args": {
+        "symbol": "ticker, e.g. NVDA",
+        "sec_type": "STK (default), OPT, FUT, IND, CASH",
+        "expiration": "options: YYYYMMDD",
+        "strike": "options: strike price",
+        "right": "options: C or P",
+        "max_age_seconds": "serve cached if fresher than this"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "ibkr.quote.snapshot"
+      ]
+    },
+    {
+      "name": "options_chain",
+      "description": "A bounded options chain snapshot for one underlying.",
+      "args": {
+        "symbol": "underlying ticker",
+        "expiration_limit": "how many expirations",
+        "strike_limit": "how many strikes",
+        "max_age_minutes": "serve cached if fresher"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "options.chain.snapshot"
+      ]
+    },
+    {
+      "name": "spx_gamma",
+      "description": "Latest SPX dealer gamma, strike-level, cached-honest on vendor failure.",
+      "args": {
+        "limit_strikes": "strikes to include",
+        "max_age_minutes": "serve cached if fresher",
+        "read_only": "true to never hit the vendor"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "spx.gamma.latest"
+      ]
+    },
+    {
+      "name": "market_context",
+      "description": "The desk's market context brief (cached-honest).",
+      "args": {
+        "focus": "optional focus area",
+        "allow_stale": "true to accept cache",
+        "read_only": "true to never refresh"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "market.context"
+      ]
+    },
+    {
+      "name": "short_volume",
+      "description": "FINRA short volume for tickers.",
+      "args": {
+        "tickers": "list of tickers",
+        "days": "lookback days"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "market.short_volume"
+      ]
+    },
+    {
+      "name": "implied_move",
+      "description": "Options-implied move into a dated event.",
+      "args": {
+        "event_date": "YYYY-MM-DD",
+        "ticker": "underlying",
+        "odds_query": "optional event-odds query"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "market.implied_move"
+      ]
+    },
+    {
+      "name": "symbol_research",
+      "description": "The full research pass on one symbol: bars, zones, options.",
+      "args": {
+        "symbol": "ticker",
+        "depth": "research depth",
+        "include_options": "true/false"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "market.symbol.research"
+      ]
+    }
+  ],
+  "framing": [
+    "FRAMING.md",
+    "DESK.md"
+  ],
+  "views": [
+    {
+      "component": "widgets"
+    },
+    {
+      "component": "conversation"
+    },
+    {
+      "component": "members"
+    },
+    {
+      "component": "board"
+    },
+    {
+      "component": "journal"
+    }
+  ],
+  "questions": [
+    {
+      "key": "watchlist",
+      "question": "Which underlyings should the desk watch?",
+      "placeholder": "NVDA, AMD, SPX"
+    },
+    {
+      "key": "premium_ceiling",
+      "question": "Maximum contract premium, in dollars?",
+      "placeholder": "6.00"
+    },
+    {
+      "key": "focus",
+      "question": "What should the desk focus on right now?",
+      "placeholder": "semis into earnings; the gamma regime"
+    }
+  ]
+}

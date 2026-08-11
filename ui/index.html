@@ -1,0 +1,492 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manifold</title>
+<style>
+  :root { color-scheme: light dark; font-family: -apple-system, "Segoe UI", sans-serif; }
+  body { margin: 0; padding: 1.2rem; max-width: 1080px; margin-inline: auto;
+         background: Canvas; color: CanvasText; }
+  header { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; }
+  h1 { font-size: 1.25rem; margin: 0; }
+  .muted { opacity: .6; font-size: .85rem; }
+  #members { display: flex; gap: .4rem; flex-wrap: wrap; margin-block: .6rem; }
+  .chip { border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+          border-radius: 999px; padding: .1rem .6rem; font-size: .85rem; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .full { grid-column: 1 / -1; }
+  #deck { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+          gap: .8rem; }
+  .card { border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+          border-radius: 10px; padding: .7rem .8rem; }
+  .card h3 { margin: 0 0 .35rem; font-size: .8rem; opacity: .6;
+             text-transform: uppercase; letter-spacing: .05em; }
+  .metric { font-size: 1.7rem; font-weight: 650; line-height: 1.1; }
+  .metric-label { font-size: .8rem; opacity: .6; }
+  .card p { margin: .3rem 0 0; font-size: .88rem; }
+  .card.wide { grid-column: span 2; }
+  .card.full { grid-column: 1 / -1; }
+  .card.compact .metric { font-size: 1.35rem; }
+  @media (max-width: 560px) { .card.wide, .card.full { grid-column: span 1; } }
+  .as-of { font-size: .72rem; opacity: .5; margin-top: .45rem; }
+  .as-of.stale { color: #c98a2b; opacity: .9; }
+  .card.pinned { border-color: color-mix(in srgb, CanvasText 45%, transparent); }
+  .chart svg { width: 100%; height: auto; display: block; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  section { border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+            border-radius: 10px; padding: .8rem; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
+       opacity: .6; margin: 0 0 .6rem; }
+  #framing { white-space: pre-wrap; font-size: .9rem; opacity: .85; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  td { padding: .25rem .4rem; vertical-align: top; border-top: 1px solid
+       color-mix(in srgb, CanvasText 10%, transparent); }
+  td.key { font-weight: 600; white-space: nowrap; }
+  td.val { font-family: ui-monospace, monospace; font-size: .82rem; word-break: break-all; }
+  #feed { display: flex; flex-direction: column; gap: .45rem; max-height: 55vh;
+          overflow-y: auto; }
+  .msg b { margin-right: .35rem; }
+  .task { border-left: 3px solid color-mix(in srgb, CanvasText 40%, transparent);
+          padding-left: .5rem; }
+  form { display: flex; gap: .5rem; margin-top: .7rem; }
+  input[type=text] { flex: 1; padding: .45rem .6rem; border-radius: 8px;
+          border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+          background: transparent; color: inherit; }
+  button { padding: .45rem .9rem; border-radius: 8px; border: 1px solid
+           color-mix(in srgb, CanvasText 25%, transparent);
+           background: transparent; color: inherit; cursor: pointer; }
+  .hint { font-size: .75rem; opacity: .5; margin-top: .3rem; }
+</style>
+
+<header>
+  <h1 id="title">…</h1>
+  <span class="muted" id="version"></span>
+</header>
+<div id="members"></div>
+<details><summary class="muted">What this place is for</summary>
+  <p id="framing"></p></details>
+
+<section id="intake" hidden>
+  <h2>Set up this desk</h2>
+  <form id="intake-form"></form>
+  <p class="hint">Your answers seed the shared context; then the agent builds the desk.</p>
+</section>
+
+<main id="views"></main>
+
+<form id="composer">
+  <input type="text" id="line" autocomplete="off"
+         placeholder="Say something — or @Name to hand them work, key=value for the context">
+  <button>Send</button>
+</form>
+<p class="hint">@Name text → ask · key=value → shared context · anything else → say</p>
+
+<script src="ui/d3.min.js"></script>
+<script src="ui/d3-sankey.min.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const token = params.get("token");
+const envId = location.pathname.split("/").filter(Boolean)[1];
+const headers = {"X-Manifold-Token": token, "Content-Type": "application/json"};
+
+async function api(method, path, body) {
+  const response = await fetch(path, {method, headers,
+    body: body ? JSON.stringify(body) : undefined});
+  if (!response.ok) throw new Error((await response.json()).error || response.status);
+  return response.json();
+}
+
+function el(tag, attrs = {}, text = "") {
+  const node = document.createElement(tag);
+  Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+  if (text) node.textContent = text;
+  return node;
+}
+
+let you = "";
+function render(view) {
+  you = view.you;
+  document.getElementById("title").textContent = view.harness.name;
+  document.getElementById("version").textContent = view.harness.version;
+  document.getElementById("framing").textContent = view.harness.framing || "";
+  const members = document.getElementById("members");
+  members.replaceChildren(...Object.entries(view.members).map(([key, name]) =>
+    el("span", {class: "chip"}, name + (key === view.you ? " (you)" : ""))));
+
+  renderIntake(view);
+  const container = document.getElementById("views");
+  container.replaceChildren();
+  for (const declared of view.harness.views) {
+    if (declared.component === "widgets") container.append(renderWidgets(view));
+    else if (declared.component === "board") container.append(renderBoard(view));
+    else if (declared.component === "conversation") container.append(renderConversation(view));
+    else if (declared.component === "journal") container.append(renderJournal());
+    else if (declared.component === "members") { /* rendered in header */ }
+    else container.append(el("section", {},
+      `[${declared.component}] — this client doesn't render that component yet`));
+  }
+}
+
+let building = false;
+function renderIntake(view) {
+  const questions = view.harness.questions || [];
+  const section = document.getElementById("intake");
+  const unanswered = questions.filter(
+    q => !(("intake/" + q.key) in view.context));
+  const hasCards = Object.keys(view.context).some(k => k.startsWith("widgets/"));
+  if (!questions.length || (hasCards && !unanswered.length)) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  const form = document.getElementById("intake-form");
+  if (form.dataset.rendered === "yes") return;
+  form.dataset.rendered = "yes";
+  form.style.flexDirection = "column";
+  form.style.alignItems = "stretch";
+  for (const q of questions) {
+    const label = el("label", {style: "font-size:.85rem;opacity:.75;margin-top:.4rem"}, q.question);
+    const input = el("input", {type: "text", id: `q-${q.key}`,
+      placeholder: q.placeholder || "", value: view.context["intake/" + q.key] || ""});
+    form.append(label, input);
+  }
+  const button = el("button", {style: "margin-top:.6rem"}, "Build the desk");
+  form.append(button);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (building) return;
+    building = true;
+    button.textContent = "The agent is building…";
+    for (const q of questions) {
+      const value = document.getElementById(`q-${q.key}`).value.trim();
+      if (value) await api("POST", `/environments/${envId}/context`,
+        {key: "intake/" + q.key, value});
+    }
+    await api("POST", `/environments/${envId}/build`);
+  });
+}
+
+function renderWidgets(view) {
+  const section = el("section", {class: "full"});
+  section.append(el("h2", {}, "Desk"));
+  const deck = el("div", {id: "deck"});
+  const cards = Object.entries(view.context)
+    .filter(([key, value]) => key.startsWith("widgets/") && value)
+    .sort(([, a], [, b]) => (b.pinned === true) - (a.pinned === true));
+  if (!cards.length) deck.append(el("span", {class: "muted"},
+    "No cards yet — any member can put one up."));
+  for (const [key, spec] of cards) {
+    const card = el("div", {class: "card"});
+    if (spec.pinned === true) card.classList.add("pinned");
+    if (["compact", "wide", "full"].includes(spec.size)) card.classList.add(spec.size);
+    card.append(el("h3", {}, spec.title || key.slice(8)));
+    if (spec.kind === "metric") {
+      card.append(el("div", {class: "metric"}, String(spec.value ?? "—")));
+      if (spec.label) card.append(el("div", {class: "metric-label"}, spec.label));
+      if (spec.detail) card.append(el("p", {}, spec.detail));
+    } else if (spec.kind === "table") {
+      const table = el("table");
+      if (spec.columns) {
+        const head = el("tr");
+        for (const column of spec.columns) head.append(el("td", {class: "key"}, column));
+        table.append(head);
+      }
+      for (const row of spec.rows || []) {
+        const line = el("tr");
+        for (const cell of row) line.append(el("td", {}, String(cell)));
+        table.append(line);
+      }
+      card.append(table);
+    } else if (spec.kind === "text") {
+      card.append(el("p", {}, spec.body || ""));
+    } else if (["line", "bar", "candle", "scatter", "ladder", "flow", "treemap"]
+               .includes(spec.kind)) {
+      card.classList.add("chart");
+      if (spec.wide !== false) card.classList.add("wide");
+      card.append(renderChart(spec));
+    } else {
+      card.append(el("p", {class: "muted"}, `[${spec.kind}] not rendered yet`));
+    }
+    deck.append(card);
+  }
+  section.append(deck);
+  return section;
+}
+
+function renderChart(spec) {
+  const tall = ["ladder", "treemap", "flow", "candle"].includes(spec.kind);
+  const width = 520, height = tall ? 300 : 240;
+  const margin = {top: 12, right: 14, bottom: 34, left: spec.kind === "ladder" ? 86 : 46};
+  const svg = d3.create("svg").attr("viewBox", `0 0 ${width} ${height}`);
+  const inner = {w: width - margin.left - margin.right,
+                 h: height - margin.top - margin.bottom};
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+  const axisColor = "color-mix(in srgb, CanvasText 55%, transparent)";
+  const gridColor = "color-mix(in srgb, CanvasText 12%, transparent)";
+  const palette = ["#4f8ef7", "#f2a43a", "#4fb98a", "#d96a6a", "#9a7bd6", "#5ec4d6"];
+  const up = "#4fb98a", down = "#d96a6a";
+
+  function styleAxis(selection) {
+    selection.selectAll("path,line").attr("stroke", axisColor);
+    selection.selectAll("text").attr("fill", axisColor).attr("font-size", "10px");
+  }
+
+  if (spec.kind === "candle") {
+    const candles = (spec.candles || []).map(([date, open, high, low, close]) =>
+      ({date, open: +open, high: +high, low: +low, close: +close}));
+    const x = d3.scaleBand().domain(candles.map(c => c.date))
+      .range([0, inner.w]).padding(0.35);
+    const y = d3.scaleLinear()
+      .domain([d3.min(candles, c => c.low), d3.max(candles, c => c.high)]).nice()
+      .range([inner.h, 0]);
+    g.append("g").call(d3.axisLeft(y).ticks(5).tickSize(-inner.w))
+      .call(styleAxis).selectAll("line").attr("stroke", gridColor);
+    const ticks = x.domain().filter((_, i, all) => i % Math.ceil(all.length / 6) === 0);
+    g.append("g").attr("transform", `translate(0,${inner.h})`)
+      .call(d3.axisBottom(x).tickValues(ticks).tickSize(0)).call(styleAxis);
+    const stick = g.selectAll("g.candle").data(candles).join("g");
+    stick.append("line")
+      .attr("x1", c => x(c.date) + x.bandwidth() / 2)
+      .attr("x2", c => x(c.date) + x.bandwidth() / 2)
+      .attr("y1", c => y(c.high)).attr("y2", c => y(c.low))
+      .attr("stroke", c => c.close >= c.open ? up : down);
+    stick.append("rect")
+      .attr("x", c => x(c.date))
+      .attr("width", x.bandwidth())
+      .attr("y", c => y(Math.max(c.open, c.close)))
+      .attr("height", c => Math.max(1, Math.abs(y(c.open) - y(c.close))))
+      .attr("rx", 1)
+      .attr("fill", c => c.close >= c.open ? up : down);
+  } else if (spec.kind === "scatter") {
+    const points = (spec.points || []).map(p =>
+      ({x: +p.x, y: +p.y, label: p.label, size: +p.size || 4}));
+    const x = d3.scaleLinear().domain(d3.extent(points, p => p.x)).nice()
+      .range([0, inner.w]);
+    const y = d3.scaleLinear().domain(d3.extent(points, p => p.y)).nice()
+      .range([inner.h, 0]);
+    g.append("g").call(d3.axisLeft(y).ticks(4).tickSize(-inner.w))
+      .call(styleAxis).selectAll("line").attr("stroke", gridColor);
+    g.append("g").attr("transform", `translate(0,${inner.h})`)
+      .call(d3.axisBottom(x).ticks(5).tickSize(0)).call(styleAxis);
+    const dot = g.selectAll("g.dot").data(points).join("g");
+    dot.append("circle")
+      .attr("cx", p => x(p.x)).attr("cy", p => y(p.y))
+      .attr("r", p => Math.min(14, p.size))
+      .attr("fill", palette[0]).attr("fill-opacity", 0.55)
+      .attr("stroke", palette[0]);
+    dot.filter(p => p.label).append("text")
+      .attr("x", p => x(p.x) + 8).attr("y", p => y(p.y) - 6)
+      .attr("fill", axisColor).attr("font-size", "10px")
+      .text(p => p.label);
+  } else if (spec.kind === "ladder") {
+    const rungs = (spec.rungs || []).map(r => ({label: String(r.label), value: +r.value}));
+    const y = d3.scaleBand().domain(rungs.map(r => r.label))
+      .range([0, inner.h]).padding(0.3);
+    const extent = [Math.min(0, d3.min(rungs, r => r.value)),
+                    Math.max(0, d3.max(rungs, r => r.value))];
+    const x = d3.scaleLinear().domain(extent).nice().range([0, inner.w]);
+    g.append("g").call(d3.axisLeft(y).tickSize(0)).call(styleAxis);
+    g.append("line").attr("x1", x(0)).attr("x2", x(0))
+      .attr("y1", 0).attr("y2", inner.h).attr("stroke", axisColor);
+    g.selectAll("rect").data(rungs).join("rect")
+      .attr("y", r => y(r.label)).attr("height", y.bandwidth())
+      .attr("x", r => Math.min(x(0), x(r.value)))
+      .attr("width", r => Math.max(1, Math.abs(x(r.value) - x(0))))
+      .attr("rx", 2)
+      .attr("fill", r => r.value < 0 ? down : up);
+    g.selectAll("text.value").data(rungs).join("text")
+      .attr("x", r => x(r.value) + (r.value < 0 ? -4 : 4))
+      .attr("y", r => y(r.label) + y.bandwidth() / 2 + 3)
+      .attr("text-anchor", r => r.value < 0 ? "end" : "start")
+      .attr("fill", axisColor).attr("font-size", "9px")
+      .text(r => r.value);
+  } else if (spec.kind === "flow") {
+    const graph = d3.sankey()
+      .nodeWidth(10).nodePadding(14)
+      .extent([[0, 0], [inner.w, inner.h]])({
+        nodes: (spec.nodes || []).map(name => ({name})),
+        links: (spec.links || []).map(([source, target, value]) =>
+          ({source, target, value: +value})),
+      });
+    g.selectAll("path").data(graph.links).join("path")
+      .attr("d", d3.sankeyLinkHorizontal())
+      .attr("fill", "none").attr("stroke", palette[0])
+      .attr("stroke-opacity", 0.35)
+      .attr("stroke-width", l => Math.max(1, l.width));
+    const node = g.selectAll("g.node").data(graph.nodes).join("g");
+    node.append("rect")
+      .attr("x", n => n.x0).attr("y", n => n.y0)
+      .attr("width", n => n.x1 - n.x0).attr("height", n => Math.max(1, n.y1 - n.y0))
+      .attr("fill", (n, i) => palette[i % palette.length]).attr("rx", 2);
+    node.append("text")
+      .attr("x", n => n.x0 < inner.w / 2 ? n.x1 + 5 : n.x0 - 5)
+      .attr("y", n => (n.y0 + n.y1) / 2 + 3)
+      .attr("text-anchor", n => n.x0 < inner.w / 2 ? "start" : "end")
+      .attr("fill", axisColor).attr("font-size", "10px")
+      .text(n => `${n.name} (${n.value})`);
+  } else if (spec.kind === "treemap") {
+    const leaves = (spec.leaves || []).map(l =>
+      ({label: String(l.label), value: Math.abs(+l.value) || 1, raw: +l.value}));
+    const root = d3.treemap().size([inner.w, inner.h]).padding(3)(
+      d3.hierarchy({children: leaves}).sum(l => l.value));
+    const cell = g.selectAll("g.cell").data(root.leaves()).join("g")
+      .attr("transform", n => `translate(${n.x0},${n.y0})`);
+    cell.append("rect")
+      .attr("width", n => n.x1 - n.x0).attr("height", n => n.y1 - n.y0)
+      .attr("rx", 3)
+      .attr("fill", n => (n.data.raw ?? 0) < 0 ? down : up)
+      .attr("fill-opacity", 0.7);
+    cell.append("text")
+      .attr("x", 6).attr("y", 16)
+      .attr("fill", "Canvas").attr("font-size", "11px").attr("font-weight", "600")
+      .text(n => n.data.label);
+    cell.append("text")
+      .attr("x", 6).attr("y", 30)
+      .attr("fill", "Canvas").attr("font-size", "10px")
+      .text(n => n.data.raw);
+  } else if (spec.kind === "bar") {
+    const bars = spec.bars || [];
+    const x = d3.scaleBand().domain(bars.map(b => String(b.label)))
+      .range([0, inner.w]).padding(0.25);
+    const extent = [Math.min(0, d3.min(bars, b => +b.value) || 0),
+                    Math.max(0, d3.max(bars, b => +b.value) || 0)];
+    const y = d3.scaleLinear().domain(extent).nice().range([inner.h, 0]);
+    g.append("g").call(d3.axisLeft(y).ticks(4).tickSize(-inner.w))
+      .call(styleAxis).selectAll("line").attr("stroke", gridColor);
+    const ticks = x.domain().filter((_, i, all) =>
+      i % Math.ceil(all.length / 8) === 0);
+    g.append("g").attr("transform", `translate(0,${y(0)})`)
+      .call(d3.axisBottom(x).tickValues(ticks).tickSize(0)).call(styleAxis);
+    g.selectAll("rect").data(bars).join("rect")
+      .attr("x", b => x(String(b.label)))
+      .attr("width", x.bandwidth())
+      .attr("y", b => Math.min(y(0), y(+b.value)))
+      .attr("height", b => Math.abs(y(+b.value) - y(0)))
+      .attr("rx", 2)
+      .attr("fill", (b, i) => +b.value < 0 ? palette[3] : palette[0]);
+  } else {
+    const series = (spec.series || []).map(s => ({
+      name: s.name,
+      points: (s.points || []).map(([px, py]) => [
+        typeof px === "string" ? new Date(px) : +px, +py]),
+    }));
+    const all = series.flatMap(s => s.points);
+    const isTime = all.length && all[0][0] instanceof Date;
+    const x = (isTime ? d3.scaleTime() : d3.scaleLinear())
+      .domain(d3.extent(all, p => p[0])).range([0, inner.w]);
+    const y = d3.scaleLinear().domain(d3.extent(all, p => p[1])).nice()
+      .range([inner.h, 0]);
+    g.append("g").call(d3.axisLeft(y).ticks(4).tickSize(-inner.w))
+      .call(styleAxis).selectAll("line").attr("stroke", gridColor);
+    g.append("g").attr("transform", `translate(0,${inner.h})`)
+      .call(d3.axisBottom(x).ticks(5).tickSize(0)).call(styleAxis);
+    const line = d3.line().x(p => x(p[0])).y(p => y(p[1]));
+    for (const [index, s] of series.entries()) {
+      g.append("path").datum(s.points)
+        .attr("fill", "none").attr("stroke", palette[index % palette.length])
+        .attr("stroke-width", 1.8).attr("d", line);
+    }
+    if (series.length > 1) {
+      const legend = g.append("g").attr("font-size", "10px");
+      series.forEach((s, index) => {
+        const item = legend.append("g")
+          .attr("transform", `translate(${index * 90}, -4)`);
+        item.append("rect").attr("width", 8).attr("height", 8)
+          .attr("y", -8).attr("fill", palette[index % palette.length]);
+        item.append("text").attr("x", 12).attr("fill", axisColor)
+          .text(s.name || `series ${index + 1}`);
+      });
+    }
+  }
+  if (spec.y_label) svg.append("text")
+    .attr("transform", "rotate(-90)").attr("x", -height / 2).attr("y", 12)
+    .attr("text-anchor", "middle").attr("fill", axisColor)
+    .attr("font-size", "10px").text(spec.y_label);
+  return svg.node();
+}
+
+function renderBoard(view) {
+  const section = el("section");
+  section.append(el("h2", {}, "Context"));
+  const table = el("table");
+  const entries = Object.entries(view.context)
+    .filter(([key]) => !key.startsWith("widgets/"));
+  if (!entries.length) table.append(el("tr", {}).appendChild(el("td", {class: "muted"}, "empty")).parentNode);
+  for (const [key, value] of entries) {
+    const row = el("tr");
+    row.append(el("td", {class: "key"}, key));
+    row.append(el("td", {class: "val"}, JSON.stringify(value)));
+    table.append(row);
+  }
+  section.append(table);
+  return section;
+}
+
+async function fillJournal(section) {
+  const items = await api("GET", `/environments/${envId}/journal`);
+  const feed = el("div", {style: "max-height:40vh;overflow-y:auto;font-size:.82rem;"});
+  for (const item of items) {
+    const when = new Date(item.timestamp_us / 1000).toLocaleTimeString();
+    const line = el("div", {class: "muted"});
+    line.append(el("b", {}, item.author + " "));
+    line.append(document.createTextNode(`${item.key} — ${item.summary}  ·  ${when}`));
+    feed.append(line);
+  }
+  section.append(feed);
+}
+
+function renderJournal() {
+  const section = el("section", {class: "full"});
+  section.append(el("h2", {}, "Journal — everything, forever"));
+  fillJournal(section);
+  return section;
+}
+
+function renderConversation(view) {
+  const section = el("section");
+  section.append(el("h2", {}, "Conversation"));
+  const feed = el("div", {id: "feed"});
+  for (const item of view.conversation) {
+    const line = el("div", {class: item.kind === "instruction" ? "msg task" : "msg"});
+    const name = el("b", {}, item.name);
+    line.append(name);
+    if (item.kind === "instruction") {
+      const target = item.to === you ? "you" : item.to_name;
+      line.append(document.createTextNode(`asks ${target}: ${item.text}`));
+    } else {
+      line.append(document.createTextNode(item.text));
+    }
+    feed.append(line);
+  }
+  section.append(feed);
+  queueMicrotask(() => feed.scrollTop = feed.scrollHeight);
+  return section;
+}
+
+async function refresh() {
+  render(await api("GET", `/environments/${envId}?token=${token}`));
+}
+
+document.getElementById("composer").addEventListener("submit", async event => {
+  event.preventDefault();
+  const box = document.getElementById("line");
+  const line = box.value.trim();
+  if (!line) return;
+  try {
+    const ask = line.match(/^@(\S+)\s+(.+)$/s);
+    const set = line.match(/^([\w./-]+)=(.+)$/s);
+    if (ask) await api("POST", `/environments/${envId}/ask`, {member: ask[1], text: ask[2]});
+    else if (set) {
+      let value; try { value = JSON.parse(set[2]); } catch { value = set[2]; }
+      await api("POST", `/environments/${envId}/context`, {key: set[1], value});
+    }
+    else await api("POST", `/environments/${envId}/say`, {text: line});
+    box.value = "";
+    refresh();
+  } catch (error) { alert(error.message); }
+});
+
+refresh();
+const stream = new EventSource(`/environments/${envId}/events?token=${token}`);
+stream.onmessage = () => refresh();
+setInterval(refresh, 5000);
+</script>

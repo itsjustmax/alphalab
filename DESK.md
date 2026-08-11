@@ -1,0 +1,25 @@
+# The desk contract (this harness's own conventions)
+
+Cards are context entries under `widgets/`. Kinds this desk's UI renders:
+
+- metric: {"kind":"metric","title","value","label"?,"detail"?}
+- table:  {"kind":"table","title","columns":[...],"rows":[[...]]}
+- text:   {"kind":"text","title","body"}
+- line:   {"kind":"line","title","series":[{"name","points":[[x,y],...]}]}
+- bar:    {"kind":"bar","title","bars":[{"label","value"}]}
+- candle: {"kind":"candle","title","candles":[[date,o,h,l,c],...]}
+- scatter:{"kind":"scatter","title","points":[{"x","y","label"?,"size"?}]}
+- ladder: {"kind":"ladder","title","rungs":[{"label","value"}]}
+- flow:   {"kind":"flow","title","nodes":[...],"links":[[i,j,value],...]}
+- treemap:{"kind":"treemap","title","leaves":[{"label","value"}]}
+
+Shared fields: "pinned":true first; "size" compact|standard|wide|full;
+"as_of" ISO clock on every data card. Live cards: "refresh" with
+value_path into this desk's receipts — inline tools
+`result.data.<field>` (a line card: value_path `result.data.points`,
+into `series.0.points`; a candle card: value_path
+`result.data.candles`, into `candles`); full-engine tools
+`result.payload_json.answer.<field>`.
+
+House rules: one pinned `widgets/brief` Today card; 6-10 cards; clocks
+on data; failures named in titles; the member's answers visible.
