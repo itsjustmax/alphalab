@@ -126,6 +126,12 @@ function render(view) {
   }
 }
 
+async function answerAsk(answerKey, value) {
+  await api("POST", `/environments/${envId}/context`, {key: answerKey, value});
+  await api("POST", `/environments/${envId}/build`);
+  refresh();
+}
+
 let building = false;
 function renderIntake(view) {
   const questions = view.harness.questions || [];
@@ -198,6 +204,31 @@ function renderWidgets(view) {
       card.append(table);
     } else if (spec.kind === "text") {
       card.append(el("p", {}, spec.body || ""));
+    } else if (spec.kind === "ask") {
+      card.style.borderColor = "color-mix(in srgb, CanvasText 45%, transparent)";
+      card.append(el("p", {}, spec.question || ""));
+      const answerKey = "answers/" + key.slice(8);
+      const already = view.context[answerKey];
+      if (already !== undefined) {
+        card.append(el("p", {class: "muted"}, `you answered: ${JSON.stringify(already)}`));
+      } else if (Array.isArray(spec.options) && spec.options.length) {
+        const row = el("div", {style: "display:flex;gap:.4rem;flex-wrap:wrap"});
+        for (const option of spec.options) {
+          const pick = el("button", {}, String(option));
+          pick.addEventListener("click", () => answerAsk(answerKey, option));
+          row.append(pick);
+        }
+        card.append(row);
+      } else {
+        const form = el("form");
+        const input = el("input", {type: "text", placeholder: "your answer…"});
+        form.append(input, el("button", {}, "Answer"));
+        form.addEventListener("submit", e => {
+          e.preventDefault();
+          if (input.value.trim()) answerAsk(answerKey, input.value.trim());
+        });
+        card.append(form);
+      }
     } else if (["line", "bar", "candle", "scatter", "ladder", "flow", "treemap"]
                .includes(spec.kind)) {
       card.classList.add("chart");
