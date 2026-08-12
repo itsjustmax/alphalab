@@ -2,8 +2,10 @@
 
 Rendered natively from their own keys — no widget needed: `watchlist`
 (live closes strip), `quotes/SYMBOL` (quote chips), `findings/<id>`
-(evidence feed), `cases/<id>` (case cards, the positions table, and
-every gate verdict). The desk header shows sync age, the autopilot's
+(evidence feed), `trades/<id>` (trade cards with contract chips, the
+positions table, and every gate verdict). Every cell carries the fold
+chip — a focused conversation scoped to that cell's data alone, on the
+member's pick of model. The desk header shows sync age, the autopilot's
 last action, `desk/next_check`, and the `desk/audit` verdict.
 
 Cards are context entries under `widgets/`. Kinds this desk's UI renders:
@@ -31,6 +33,10 @@ Cards are context entries under `widgets/`. Kinds this desk's UI renders:
 - ladder: {"kind":"ladder","title","rungs":[{"label","value"}]}
 - flow:   {"kind":"flow","title","nodes":[...],"links":[[i,j,value],...]}
 - treemap:{"kind":"treemap","title","leaves":[{"label","value"}]}
+- slider: {"kind":"slider","title","label"?,"min","max","step","value","unit"?}
+  — interactive; the member's setting lands at `answers/<card-id>`
+- choices:{"kind":"choices","title","question"?,"options":[...]} — one tap,
+  same landing key
 - ask:    {"kind":"ask","title","question","options"?:["a","b"]} — a card
   that requests the member's input. Their answer lands at
   `answers/<card-id>` and triggers a revision turn: read it, adjust the
@@ -47,7 +53,7 @@ value_path into the receipt — every tool answers at
 envelope at `result.payload_json` if you need more than the answer).
 
 Working paper orders are program-backed cards with a fixed contract:
-`widgets/fill-<case-id>` (or `…-exit`), kind "order", carrying a
+`widgets/fill-<trade-id>` (or `…-exit`), kind "order", carrying a
 `refresh` program running `fill_watch` (`value_path` `result.data`,
 `into` `check`) — a standing reqMktData stream per contract, gated
 tick by tick; the autopilot also watches each armed order live and
@@ -72,11 +78,12 @@ The autopilot's scheduled turns default to sonnet (--model). Register
 more models in ~/.manifold/models.json — any terminal-invocable
 command.
 
-Cases render from `cases/<id>` directly (they are not widgets): state
-badge, thesis, invalidation, evidence, and the fill with its receipted
-market, clock, and confirmation. Gate verdicts come from `case_check`
-receipts — a case that breaks the contract renders its violations in
-red, and the autopilot writes the same audit to `desk/audit`.
+Trades render from `trades/<id>` directly (they are not widgets):
+state badge, contract chips, thesis, invalidation, evidence, and each
+fill with its receipted market and clock. Gate verdicts come from
+`trade_check` receipts — a trade that breaks the contract renders its
+violations in red, and the autopilot writes the same audit to
+`desk/audit`.
 
 House rules: one pinned `widgets/brief` Today card; curate toward ~12
 widget cards and ~25 entries overall; clocks on data; failures named in

@@ -1,20 +1,20 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "1.11.0",
+  "version": "2.0.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
     "quotes/": "one key per symbol, canonical: {\"refresh\": {\"tool\": \"live_quote\", \"args\": {\"symbol\": \"NVDA\"}, \"minutes\": 1, \"value_path\": \"result.data.quote\", \"into\": \"quote\"}} — a standing reqMktData stream keeps it current; the desk renders entry.quote {bid, ask, last, observed_at} as a live chip. Use quote_snapshot only for one-off or slow-cadence reads.",
     "findings/": "one key per finding: {title, source, as_of} — evidence worth keeping; the desk renders the findings feed from these",
-    "cases/": "one key per trade case: {contract, thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill stays null until the market gate passes — the autopilot records a supported order's exact receipt block {price, bid, ask, quantity, observed_at}; agents never write fill blocks and carry existing ones through unchanged. exit: same shape, closed cases only. The audit (desk/audit) verdicts every case after each change.",
     "answers/": "the member's replies to ask cards, one key per card id — direction and risk decisions only; fills need no answers",
     "desk/next_check": "the agent's own next check-in clock (ISO-8601 UTC, >=10 minutes out); the autopilot honors it",
     "desk/focus": "one line: what the next check-in should look at",
     "desk/autopilot": "the autopilot's last action: {last_turn, reason, builds_today, budget} — written by tools/autopilot.py, never by the agent",
-    "desk/audit": "the autopilot's latest gate audit of every case: {clean, cases_checked, violations, as_of} — if it names violations, fixing them is the next turn's first job",
+    "desk/audit": "the autopilot's latest gate audit of every trade: {clean, cases_checked, violations, as_of} — if it names violations, fixing them is the next turn's first job",
     "widgets/": "the desk: one declarative card per key (widgets convention)",
-    "widgets/brief": "the pinned Today card: what the desk is doing and what needs eyes"
+    "widgets/brief": "the pinned Today card: what the desk is doing and what needs eyes",
+    "trades/": "one key per trade: {contracts: [1-5 exact contracts], thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill stays null until the market gate passes — the autopilot records a supported order's exact receipt block {contract, price, bid, ask, quantity, observed_at}; agents never write fill blocks and carry existing ones through unchanged. exit: same shape, closed trades only. The audit (desk/audit) verdicts every trade after each change."
   },
   "tools": [
     {
@@ -53,16 +53,16 @@
       ]
     },
     {
-      "name": "case_check",
-      "description": "Validate one cases/<id> value against the case contract: thesis, evidence keys, invalidation always written, honest state, and the fill gates. Answers every violation by name. data: {violations}.",
+      "name": "trade_check",
+      "description": "Validate one trades/<id> value against the trade contract: 1-5 exact contracts, thesis, evidence keys, invalidation always written, honest state, and the fill gates. Answers every violation by name. data: {violations}.",
       "args": {
-        "case": "the cases/<id> value to check",
-        "id": "the case id, for the summary"
+        "trade": "the trades/<id> value to check",
+        "id": "the trade id, for the summary"
       },
       "command": [
         "python3",
         "tools/run.py",
-        "case_check"
+        "trade_check"
       ]
     },
     {

@@ -134,6 +134,7 @@ OPERATIONS = {
     "daily_bars": daily_bars,
     "price_summary": price_summary,
     "capabilities": capabilities,
+    "trade_check": gates.trade_check,
     "case_check": gates.case_check,
     "fill_check": gates.fill_check,
     "fill_watch": gates.fill_watch,

@@ -1,9 +1,9 @@
 """The paper-trading gates: trade cases and the simulated-fill discipline.
 
-A case (``cases/<id>``) is the desk's unit of research: contract, thesis,
-evidence keys, invalidation, and an honest state — idea, watching,
-open-simulated, closed. A simulated fill enters a case only through the
-market gate:
+A trade (``trades/<id>``) is the desk's unit of research: one idea,
+one through five exact contracts, thesis, evidence keys, invalidation,
+and an honest state — idea, watching, open-simulated, closed. A
+simulated fill enters a trade only through the market gate:
 
   a live receipted regular-session bid/ask from the engine contains the
   price — ``fill_check`` fetches that quote itself, so there is no
@@ -24,13 +24,13 @@ from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
 
-CASE_STATES = ("idea", "watching", "open-simulated", "closed")
-CASE_FIELDS = {
-    "contract", "thesis", "evidence", "invalidation", "state",
+TRADE_STATES = ("idea", "watching", "open-simulated", "closed")
+TRADE_FIELDS = {
+    "contracts", "thesis", "evidence", "invalidation", "state",
     "fill", "exit", "as_of",
 }
-CASE_REQUIRED = {"contract", "thesis", "evidence", "invalidation", "state"}
-FILL_FIELDS = {"price", "bid", "ask", "quantity", "observed_at"}
+TRADE_REQUIRED = {"contracts", "thesis", "evidence", "invalidation", "state"}
+FILL_FIELDS = {"contract", "price", "bid", "ask", "quantity", "observed_at"}
 
 QUOTE_MAX_AGE_SECONDS = 120
 
@@ -77,10 +77,12 @@ def fill_violations(fill, label="fill"):
         return [f"the {label} is not an object"]
     if set(fill) != FILL_FIELDS:
         return [
-            f"the {label} carries exactly price, bid, ask, quantity, "
-            "observed_at — nothing else, nothing missing"
+            f"the {label} carries exactly contract, price, bid, ask, "
+            "quantity, observed_at — nothing else, nothing missing"
         ]
     violations = []
+    if not str(fill.get("contract") or "").strip():
+        violations.append(f"the {label} names the exact contract it filled")
     price, bid, ask = (_number(fill[k]) for k in ("price", "bid", "ask"))
     if any(v is None or v < 0 for v in (price, bid, ask)):
         violations.append(f"the {label} needs finite non-negative price, bid, ask")
@@ -110,36 +112,47 @@ def fill_violations(fill, label="fill"):
     return violations
 
 
-def case_violations(case):
-    """Every way one cases/<id> value breaks the case contract, by name."""
+def trade_violations(trade):
+    """Every way one trades/<id> value breaks the trade contract, by name."""
 
-    if not isinstance(case, dict):
-        return ["a case is one JSON object"]
+    if not isinstance(trade, dict):
+        return ["a trade is one JSON object"]
     violations = []
-    unknown = set(case) - CASE_FIELDS
+    unknown = set(trade) - TRADE_FIELDS
     if unknown:
         violations.append(f"unknown field(s): {', '.join(sorted(unknown))}")
-    missing = CASE_REQUIRED - set(case)
+    missing = TRADE_REQUIRED - set(trade)
     if missing:
         violations.append(f"missing field(s): {', '.join(sorted(missing))}")
-    for field, limit in (("contract", 240), ("thesis", 2000), ("invalidation", 2000)):
-        if field in case:
-            text = str(case[field] or "").strip()
+    contracts = trade.get("contracts")
+    if "contracts" in trade:
+        if (not isinstance(contracts, list) or not 1 <= len(contracts) <= 5
+                or any(not (isinstance(item, str) and item.strip()
+                            and len(item) <= 120)
+                       for item in contracts)):
+            violations.append(
+                "a trade names one through five exact contracts")
+            contracts = []
+    else:
+        contracts = []
+    for field, limit in (("thesis", 2000), ("invalidation", 2000)):
+        if field in trade:
+            text = str(trade[field] or "").strip()
             if not text:
                 violations.append(
-                    "a case always writes what would prove it wrong"
+                    "a trade always writes what would prove it wrong"
                     if field == "invalidation"
-                    else f"a case needs a non-empty {field}"
+                    else f"a trade needs a non-empty {field}"
                 )
             elif len(text) > limit:
                 violations.append(f"{field} runs past {limit} characters")
-    state = str(case.get("state", "")).strip()
-    if state not in CASE_STATES:
+    state = str(trade.get("state", "")).strip()
+    if state not in TRADE_STATES:
         violations.append(
-            f"state {state!r} is not one of {' | '.join(CASE_STATES)}"
+            f"state {state!r} is not one of {' | '.join(TRADE_STATES)}"
         )
-    evidence = case.get("evidence")
-    if "evidence" in case:
+    evidence = trade.get("evidence")
+    if "evidence" in trade:
         if not isinstance(evidence, list) or len(evidence) > 24 or any(
             not (isinstance(key, str) and key.strip() and len(key) <= 240)
             for key in evidence
@@ -148,43 +161,57 @@ def case_violations(case):
                 "evidence is a list of up to 24 context keys "
                 "(findings/, quotes/, widgets/)"
             )
-    fill = case.get("fill")
-    exit_fill = case.get("exit")
+    fill = trade.get("fill")
+    exit_fill = trade.get("exit")
     if state in ("open-simulated", "closed") and fill is None:
         violations.append(
-            f"an {state} case needs its receipted fill"
+            f"an {state} trade needs its receipted fill"
         )
     if state in ("idea", "watching") and fill is not None:
         violations.append("a fill cannot exist before open-simulated")
     if exit_fill is not None and state != "closed":
-        violations.append("an exit belongs only on a closed case")
-    if fill is not None:
-        violations.extend(fill_violations(fill, label="fill"))
-    if exit_fill is not None:
-        violations.extend(fill_violations(exit_fill, label="exit"))
-    if case.get("as_of") is not None and parse_clock(case["as_of"]) is None:
+        violations.append("an exit belongs only on a closed trade")
+    for label, block in (("fill", fill), ("exit", exit_fill)):
+        if block is None:
+            continue
+        violations.extend(fill_violations(block, label=label))
+        filled_contract = str((block or {}).get("contract") or "").strip() \
+            if isinstance(block, dict) else ""
+        if filled_contract and contracts and filled_contract not in contracts:
+            violations.append(
+                f"the {label}'s contract {filled_contract!r} is not one of "
+                "this trade's contracts")
+    if trade.get("as_of") is not None and parse_clock(trade["as_of"]) is None:
         violations.append("as_of must be a timezone-bearing ISO-8601 clock")
     return violations
 
 
-def case_check(arguments):
-    """Validate one cases/<id> value; every violation is named, none hidden."""
+# The old name remains callable while anything still says "case".
+case_violations = trade_violations
 
-    case = arguments.get("case")
-    case_id = str(arguments.get("id") or "").strip() or "case"
-    violations = case_violations(case)
+
+def trade_check(arguments):
+    """Validate one trades/<id> value; every violation is named, none hidden."""
+
+    trade = arguments.get("trade", arguments.get("case"))
+    trade_id = str(arguments.get("id") or "").strip() or "trade"
+    violations = trade_violations(trade)
     if violations:
         return receipt(
-            f"{case_id} breaks {len(violations)} gate(s)",
+            f"{trade_id} breaks {len(violations)} gate(s)",
             {"violations": violations},
             gaps=violations,
             ok=False,
         )
     return receipt(
-        f"{case_id} holds: state {case['state']}, invalidation written, "
-        f"{len(case.get('evidence') or [])} evidence key(s)",
-        {"violations": [], "state": case["state"]},
+        f"{trade_id} holds: state {trade['state']}, invalidation written, "
+        f"{len(trade.get('contracts') or [])} contract(s), "
+        f"{len(trade.get('evidence') or [])} evidence key(s)",
+        {"violations": [], "state": trade["state"]},
     )
+
+
+case_check = trade_check
 
 
 def _refused(summary, reasons):
@@ -318,7 +345,7 @@ def _gate_quote(parsed, quote, now, extra=None):
         "contract": contract,
         "action": action,
         "fill": {
-            "price": price, "bid": bid, "ask": ask,
+            "contract": contract, "price": price, "bid": bid, "ask": ask,
             "quantity": quantity, "observed_at": observed_at,
         },
     }

@@ -150,16 +150,16 @@ def order_recording(card_key, context, check, now):
         return None  # stale receipt — wait for the next check
     suffix = card_key[len("widgets/fill-"):]
     is_exit = suffix.endswith("-exit")
-    case_id = suffix[:-5] if is_exit else suffix
-    case = (context or {}).get(f"cases/{case_id}")
-    if not isinstance(case, dict):
+    trade_id = suffix[:-5] if is_exit else suffix
+    trade = (context or {}).get(f"trades/{trade_id}")
+    if not isinstance(trade, dict):
         return None
-    state = case.get("state")
+    state = trade.get("state")
     if is_exit and state != "open-simulated":
         return None
     if not is_exit and state not in ("idea", "watching"):
         return None
-    recorded = dict(case)
+    recorded = dict(trade)
     if is_exit:
         recorded["exit"] = fill
         recorded["state"] = "closed"
@@ -169,12 +169,12 @@ def order_recording(card_key, context, check, now):
     recorded["as_of"] = now.isoformat(timespec="seconds")
     return {
         "card_key": card_key,
-        "case_key": f"cases/{case_id}",
+        "case_key": f"trades/{trade_id}",
         "case": recorded,
         "summary": (
             f"paper {'exit' if is_exit else 'fill'} recorded — "
             f"{check.get('action', 'buy')} {fill['quantity']} × "
-            f"{check.get('contract', case_id)} @ ${fill['price']:g} "
+            f"{check.get('contract', trade_id)} @ ${fill['price']:g} "
             f"against the live market {fill['bid']:g} × {fill['ask']:g} "
             f"({fill['observed_at']})"),
     }
@@ -266,37 +266,37 @@ class Pilot:
         with urllib.request.urlopen(request, timeout=60) as response:
             return json.loads(response.read())
 
-    def _check_case(self, key, case):
+    def _check_trade(self, key, trade):
         try:
             reply = self._api(
-                "POST", f"/environments/{self.environment}/tools/case_check",
-                {"args": {"case": case, "id": key[6:]}})
+                "POST", f"/environments/{self.environment}/tools/trade_check",
+                {"args": {"trade": trade, "id": key[7:]}})
         except Exception as error:
-            return [f"case_check did not answer: {str(error)[:120]}"]
+            return [f"trade_check did not answer: {str(error)[:120]}"]
         result = reply.get("result") or {}
         data = result.get("data") or {}
         if isinstance(data.get("violations"), list):
             return [str(item) for item in data["violations"]]
         if result.get("ok"):
             return []
-        return [str(gap) for gap in result.get("gaps") or ["case_check failed"]]
+        return [str(gap) for gap in result.get("gaps") or ["trade_check failed"]]
 
     def audit(self, context, now):
         """Audit the cases after they change; the verdict lands at desk/audit
         where the next turn (and the desk header) can see it."""
 
-        cases = {k: v for k, v in context.items() if k.startswith("cases/")}
-        fingerprint = json.dumps(cases, sort_keys=True, default=str)
+        trades = {k: v for k, v in context.items() if k.startswith("trades/")}
+        fingerprint = json.dumps(trades, sort_keys=True, default=str)
         if fingerprint == self.state.get("audit_fingerprint"):
             return None
-        violations = audit_violations(cases, self._check_case)
+        violations = audit_violations(trades, self._check_trade)
         self.state["audit_fingerprint"] = fingerprint
         self._save()
         self._api("POST", f"/environments/{self.environment}/context", {
             "key": "desk/audit",
             "value": {
                 "clean": not violations,
-                "cases_checked": len(cases),
+                "cases_checked": len(trades),
                 "violations": violations,
                 "as_of": now.isoformat(timespec="seconds"),
             },

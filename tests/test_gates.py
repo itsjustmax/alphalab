@@ -26,6 +26,7 @@ NOW = datetime.datetime(2026, 8, 12, 18, 32, 0, tzinfo=datetime.timezone.utc)
 
 def make_fill(**overrides):
     fill = {
+        "contract": "NVDA 20260814 190C",
         "price": 4.00, "bid": 3.90, "ask": 4.00, "quantity": 2,
         "observed_at": LIVE_CLOCK,
     }
@@ -35,7 +36,7 @@ def make_fill(**overrides):
 
 def make_case(**overrides):
     case = {
-        "contract": "NVDA 20260814 190C",
+        "contracts": ["NVDA 20260814 190C"],
         "thesis": "long on the supply-lid break above 189",
         "evidence": ["findings/nvda-supply-lid", "quotes/NVDA"],
         "invalidation": "a daily close back under 185 kills the break",
@@ -173,7 +174,7 @@ def test_an_exit_belongs_only_on_a_closed_case():
         state="open-simulated", fill=make_fill(), exit=make_fill(price=3.95)
     )
     assert any(
-        "exit belongs only on a closed case" in v
+        "exit belongs only on a closed trade" in v
         for v in gates.case_violations(case)
     )
 
@@ -207,6 +208,7 @@ def test_fill_check_supports_a_price_inside_the_live_market():
     data = result["data"]
     assert data["verdict"] == "fill-supported"
     assert data["fill"] == {
+        "contract": "NVDA 20260814 190C",
         "price": 4.00, "bid": 3.90, "ask": 4.00, "quantity": 2,
         "observed_at": LIVE_CLOCK,
     }
@@ -461,3 +463,20 @@ def test_the_adapter_redacts_local_paths():
     assert scrubbed["summary"] == "failed reading ~ALPHALAB_HOME/cache.db"
     assert scrubbed["gaps"][0] == "traceback at ~ENGINE/alphalab/x.py"
     assert scrubbed["gaps"][1] == "wrote ~/notes.txt"
+
+
+def test_a_trade_names_one_through_five_contracts():
+    for contracts in ([], ["a"] * 6, "NVDA", [""], None):
+        violations = gates.trade_violations(make_case(contracts=contracts))
+        assert any(
+            "one through five exact contracts" in v for v in violations
+        ), contracts
+    spread = make_case(contracts=["NVDA 20260821 230C", "NVDA 20260821 240C"])
+    assert gates.trade_violations(spread) == []
+
+
+def test_a_fill_must_name_one_of_the_trades_contracts():
+    trade = make_case(state="open-simulated",
+                      fill=make_fill(contract="AMD 20260821 175C"))
+    violations = gates.trade_violations(trade)
+    assert any("not one of this trade's contracts" in v for v in violations)

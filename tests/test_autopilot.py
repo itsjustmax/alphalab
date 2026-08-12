@@ -116,10 +116,10 @@ def test_a_new_trading_date_resets_the_budget():
 
 
 def test_the_audit_names_only_the_broken_cases():
-    cases = {"cases/good": {"state": "idea"}, "cases/bad": {"state": "open"}}
-    verdicts = {"cases/good": [], "cases/bad": ["no receipted fill"]}
+    cases = {"trades/good": {"state": "idea"}, "trades/bad": {"state": "open"}}
+    verdicts = {"trades/good": [], "trades/bad": ["no receipted fill"]}
     result = autopilot.audit_violations(cases, lambda key, case: verdicts[key])
-    assert result == {"cases/bad": ["no receipted fill"]}
+    assert result == {"trades/bad": ["no receipted fill"]}
 
 
 def test_the_audit_runs_once_per_case_change(tmp_path):
@@ -129,20 +129,20 @@ def test_the_audit_runs_once_per_case_change(tmp_path):
 
     def fake_api(method, path, body=None):
         calls.append((method, path))
-        if "tools/case_check" in path:
+        if "tools/trade_check" in path:
             return {"ok": True, "result": {"ok": True,
                                            "data": {"violations": []}}}
         return {"ok": True}
 
     pilot._api = fake_api
-    context = {"cases/nvda": {"state": "idea"}}
+    context = {"trades/nvda": {"state": "idea"}}
     now = datetime.datetime(2026, 8, 12, 18, 31, 0,
                             tzinfo=datetime.timezone.utc)
     pilot.audit(context, now)
     first = len(calls)
     pilot.audit(context, now)          # unchanged cases: no rework
     assert len(calls) == first
-    context["cases/nvda"] = {"state": "watching"}
+    context["trades/nvda"] = {"state": "watching"}
     pilot.audit(context, now)          # changed: audited again
     assert len(calls) > first
     audits = [c for c in calls if c == ("POST", "/environments/env/context")]
@@ -150,7 +150,8 @@ def test_the_audit_runs_once_per_case_change(tmp_path):
 
 
 def make_order(check_verdict="fill-supported", observed_at=None, kind="order"):
-    fill = {"price": 4.0, "bid": 3.9, "ask": 4.0, "quantity": 2,
+    fill = {"contract": "NVDA 20260814 190C", "price": 4.0, "bid": 3.9,
+            "ask": 4.0, "quantity": 2,
             "observed_at": observed_at or "2026-08-12T14:30:30-04:00"}
     return {"kind": kind, "title": "order",
             "check": {"verdict": check_verdict, "contract": "NVDA 20260814 190C",
@@ -158,7 +159,7 @@ def make_order(check_verdict="fill-supported", observed_at=None, kind="order"):
             "refresh": {"tool": "fill_check", "args": {}}}
 
 
-WATCHING_CASE = {"contract": "NVDA 20260814 190C", "thesis": "t",
+WATCHING_CASE = {"contracts": ["NVDA 20260814 190C"], "thesis": "t",
                  "evidence": [], "invalidation": "close under 185",
                  "state": "watching", "fill": None, "exit": None}
 
@@ -166,11 +167,11 @@ WATCHING_CASE = {"contract": "NVDA 20260814 190C", "thesis": "t",
 def test_a_supported_fresh_order_records_the_fill():
     # RTH: 2026-08-12 14:31 ET; receipt 30s old.
     context = {"widgets/fill-nvda-190c": make_order(),
-               "cases/nvda-190c": dict(WATCHING_CASE)}
+               "trades/nvda-190c": dict(WATCHING_CASE)}
     recordings = autopilot.supported_orders(context, RTH)
     assert len(recordings) == 1
     recording = recordings[0]
-    assert recording["case_key"] == "cases/nvda-190c"
+    assert recording["case_key"] == "trades/nvda-190c"
     assert recording["card_key"] == "widgets/fill-nvda-190c"
     assert recording["case"]["state"] == "open-simulated"
     assert recording["case"]["fill"]["price"] == 4.0
@@ -178,7 +179,7 @@ def test_a_supported_fresh_order_records_the_fill():
 
 
 def test_orders_wait_on_stale_refused_or_missing_gates():
-    fresh_case = {"cases/nvda-190c": dict(WATCHING_CASE)}
+    fresh_case = {"trades/nvda-190c": dict(WATCHING_CASE)}
     stale = {"widgets/fill-nvda-190c":
              make_order(observed_at="2026-08-12T14:10:00-04:00"), **fresh_case}
     refused = {"widgets/fill-nvda-190c":
@@ -191,27 +192,28 @@ def test_orders_wait_on_stale_refused_or_missing_gates():
 
 def test_an_exit_order_closes_an_open_case():
     open_case = {**WATCHING_CASE, "state": "open-simulated",
-                 "fill": {"price": 3.5, "bid": 3.4, "ask": 3.5, "quantity": 2,
+                 "fill": {"contract": "NVDA 20260814 190C", "price": 3.5, "bid": 3.4,
+                          "ask": 3.5, "quantity": 2,
                           "observed_at": "2026-08-11T14:00:00-04:00"}}
     context = {"widgets/fill-nvda-190c-exit": make_order(),
-               "cases/nvda-190c": open_case}
+               "trades/nvda-190c": open_case}
     recordings = autopilot.supported_orders(context, RTH)
     assert len(recordings) == 1
     assert recordings[0]["case"]["state"] == "closed"
     assert recordings[0]["case"]["exit"]["price"] == 4.0
     assert recordings[0]["case"]["fill"]["price"] == 3.5  # entry untouched
     # An exit against a case that is not open records nothing.
-    context["cases/nvda-190c"] = dict(WATCHING_CASE)
+    context["trades/nvda-190c"] = dict(WATCHING_CASE)
     assert autopilot.supported_orders(context, RTH) == []
 
 
 def test_a_recorded_fill_earns_a_narration_turn():
     settled = state(last_turn="2026-08-12T18:05:00+00:00",
-                    unnarrated_fills=["cases/nvda-190c"])
+                    unnarrated_fills=["trades/nvda-190c"])
     action, reason = autopilot.decide(ACTIVE_DESK, settled, RTH)
     assert action == "build"
-    assert "paper fill recorded: cases/nvda-190c" == reason.replace("paper fill recorded: ", "paper fill recorded: ")
-    assert "cases/nvda-190c" in reason
+    assert "paper fill recorded: trades/nvda-190c" == reason.replace("paper fill recorded: ", "paper fill recorded: ")
+    assert "trades/nvda-190c" in reason
 
 
 def test_the_stream_lane_records_and_releases_the_subscription(tmp_path):
@@ -224,14 +226,15 @@ def test_the_stream_lane_records_and_releases_the_subscription(tmp_path):
                   "contract": "NVDA 20260814 190C"}
     live_check = {"verdict": "fill-supported", "contract": "NVDA 20260814 190C",
                   "action": "buy", "stream": {"stream_id": "s-1"},
-                  "fill": {"price": 4.0, "bid": 3.9, "ask": 4.0, "quantity": 2,
+                  "fill": {"contract": "NVDA 20260814 190C", "price": 4.0, "bid": 3.9,
+                           "ask": 4.0, "quantity": 2,
                            "observed_at": "2026-08-12T14:30:30-04:00"}}
 
     def fake_api(method, path, body=None):
         calls.append((path, body))
         if path.endswith("/tools/fill_watch"):
             return {"ok": True, "result": {"ok": True, "data": live_check}}
-        if path.endswith("/tools/case_check"):
+        if path.endswith("/tools/trade_check"):
             return {"ok": True, "result": {"ok": True, "data": {"violations": []}}}
         return {"ok": True}
 
@@ -240,13 +243,13 @@ def test_the_stream_lane_records_and_releases_the_subscription(tmp_path):
         "widgets/fill-nvda-190c": {"kind": "order",
                                    "refresh": {"tool": "fill_watch",
                                                "args": order_args}},
-        "cases/nvda-190c": dict(WATCHING_CASE),
+        "trades/nvda-190c": dict(WATCHING_CASE),
     }
     recordings = pilot.record_orders(context, RTH)
     assert len(recordings) == 1
     case_writes = [body for path, body in calls
                    if path.endswith("/context") and body
-                   and body.get("key") == "cases/nvda-190c"]
+                   and body.get("key") == "trades/nvda-190c"]
     assert case_writes and case_writes[0]["value"]["state"] == "open-simulated"
     stops = [body for path, body in calls
              if path.endswith("/tools/market_stream")]

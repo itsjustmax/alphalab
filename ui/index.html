@@ -3,120 +3,211 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Manifold</title>
 <style>
-  :root { color-scheme: light dark; font-family: -apple-system, "Segoe UI", sans-serif; }
-  body { margin: 0; padding: 1.4rem 1.2rem 2.5rem; max-width: 1140px;
-         margin-inline: auto; background: Canvas; color: CanvasText; }
-  header { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; }
-  h1 { font-size: 1.55rem; margin: 0; letter-spacing: -.01em; }
-  .muted { opacity: .6; font-size: .85rem; }
-  #members { display: flex; gap: .4rem; flex-wrap: wrap; margin-block: .6rem; }
-  .chip { border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
-          border-radius: 999px; padding: .1rem .6rem; font-size: .85rem; }
-  main { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  :root {
+    color-scheme: dark;
+    --bg: #0b0e14;
+    --surface: #12161f;
+    --surface-2: #171c28;
+    --border: rgba(235, 240, 255, .08);
+    --border-strong: rgba(235, 240, 255, .16);
+    --text: #e8ebf3;
+    --muted: rgba(232, 235, 243, .55);
+    --accent: #5b8cff;
+    --up: #34d399;
+    --down: #f4645f;
+    --warn: #f5a524;
+    --font: "Inter", -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f7f8fb;
+    --surface: #ffffff;
+    --surface-2: #f0f2f7;
+    --border: rgba(15, 23, 42, .09);
+    --border-strong: rgba(15, 23, 42, .2);
+    --text: #101623;
+    --muted: rgba(16, 22, 35, .55);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 1.6rem 1.4rem 3rem; max-width: 1180px;
+         margin-inline: auto; background: var(--bg); color: var(--text);
+         font-family: var(--font); font-size: 15px; line-height: 1.45;
+         -webkit-font-smoothing: antialiased; }
+  header { display: flex; align-items: baseline; gap: .9rem; flex-wrap: wrap; }
+  header .controls { margin-left: auto; display: flex; gap: .5rem;
+                     align-items: center; }
+  h1 { font-size: 1.7rem; margin: 0; letter-spacing: -.02em; font-weight: 750;
+       background: linear-gradient(100deg, var(--text) 60%, var(--accent));
+       -webkit-background-clip: text; background-clip: text;
+       -webkit-text-fill-color: transparent; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  #members { display: flex; gap: .4rem; flex-wrap: wrap; margin-block: .55rem; }
+  .chip { border: 1px solid var(--border-strong); border-radius: 999px;
+          padding: .12rem .65rem; font-size: .82rem; color: var(--muted); }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; }
   .full { grid-column: 1 / -1; }
-  #deck { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-          gap: .8rem; }
-  .card { border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
-          border-radius: 10px; padding: .7rem .8rem; }
-  .card h3 { margin: 0 0 .35rem; font-size: .8rem; opacity: .6;
-             text-transform: uppercase; letter-spacing: .05em; }
-  .metric { font-size: 1.7rem; font-weight: 650; line-height: 1.1; }
-  .metric-label { font-size: .8rem; opacity: .6; }
-  .card p { margin: .3rem 0 0; font-size: .88rem; }
+  #deck { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+          gap: .9rem; }
+  .card { border: 1px solid var(--border); border-radius: 14px;
+          padding: .85rem 1rem; background: var(--surface);
+          box-shadow: 0 1px 2px rgba(0,0,0,.18); position: relative; }
+  .card-head { display: flex; align-items: baseline; gap: .5rem; }
+  .card h3 { margin: 0 0 .4rem; font-size: .74rem; color: var(--muted);
+             text-transform: uppercase; letter-spacing: .09em; flex: 1;
+             font-weight: 650; }
+  .focus-chip { border: none; background: transparent; color: var(--muted);
+                cursor: pointer; padding: .1rem .25rem; border-radius: 6px;
+                line-height: 0; opacity: 0; transition: opacity .15s; }
+  .card:hover .focus-chip, section:hover .focus-chip { opacity: .9; }
+  .focus-chip:hover { color: var(--accent); background: var(--surface-2); }
+  .metric { font-size: 1.9rem; font-weight: 700; line-height: 1.1;
+            font-family: var(--mono); letter-spacing: -.02em; }
+  .metric-label { font-size: .8rem; color: var(--muted); }
+  .card p { margin: .35rem 0 0; font-size: .88rem; }
   .card.wide { grid-column: span 2; }
   .card.full { grid-column: 1 / -1; }
-  .card.compact .metric { font-size: 1.35rem; }
+  .card.compact .metric { font-size: 1.4rem; }
   @media (max-width: 560px) { .card.wide, .card.full { grid-column: span 1; } }
-  .as-of { font-size: .72rem; opacity: .5; margin-top: .45rem; }
-  .as-of.stale { color: #c98a2b; opacity: .9; }
-  .card.pinned { border-color: color-mix(in srgb, CanvasText 45%, transparent); }
+  .as-of { font-size: .72rem; color: var(--muted); margin-top: .5rem;
+           font-family: var(--mono); }
+  .as-of.stale { color: var(--warn); }
+  .card.pinned { border-color: var(--border-strong); }
   .chart svg { width: 100%; height: auto; display: block; }
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
-  section { border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
-            border-radius: 12px; padding: .9rem 1rem;
-            background: color-mix(in srgb, CanvasText 2.5%, Canvas); }
-  .card { background: Canvas; }
-  #askdesk { margin-top: 1rem;
-             border-color: color-mix(in srgb, #4f8ef7 45%, transparent); }
-  button.primary { border-color: #4f8ef7; color: #4f8ef7; font-weight: 600;
-                   white-space: nowrap; }
-  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
-       opacity: .6; margin: 0 0 .6rem; }
-  #framing { white-space: pre-wrap; font-size: .9rem; opacity: .85; }
-  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
-  td { padding: .25rem .4rem; vertical-align: top; border-top: 1px solid
-       color-mix(in srgb, CanvasText 10%, transparent); }
-  td.key { font-weight: 600; white-space: nowrap; }
-  td.val { font-family: ui-monospace, monospace; font-size: .82rem; word-break: break-all; }
+  section { border: 1px solid var(--border); border-radius: 16px;
+            padding: 1rem 1.1rem; background: var(--surface); }
+  h2 { font-size: .74rem; text-transform: uppercase; letter-spacing: .12em;
+       color: var(--muted); margin: 0 0 .7rem; font-weight: 700; }
+  h2::before { content: ""; display: inline-block; width: .55rem; height: .55rem;
+               border-radius: 2px; background: var(--accent); margin-right: .5rem;
+               vertical-align: 1px; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  td { padding: .35rem .45rem; vertical-align: top;
+       border-top: 1px solid var(--border); }
+  td.key { font-weight: 650; white-space: nowrap; color: var(--muted);
+           font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
+  td.val { font-family: var(--mono); font-size: .82rem; word-break: break-all; }
   #feed { display: flex; flex-direction: column; gap: .45rem; max-height: 55vh;
           overflow-y: auto; }
   .msg b { margin-right: .35rem; }
-  .task { border-left: 3px solid color-mix(in srgb, CanvasText 40%, transparent);
-          padding-left: .5rem; }
+  .task { border-left: 3px solid var(--border-strong); padding-left: .5rem; }
   form { display: flex; gap: .5rem; margin-top: .7rem; }
-  input[type=text] { flex: 1; padding: .45rem .6rem; border-radius: 8px;
-          border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
-          background: transparent; color: inherit; }
-  button { padding: .45rem .9rem; border-radius: 8px; border: 1px solid
-           color-mix(in srgb, CanvasText 25%, transparent);
-           background: transparent; color: inherit; cursor: pointer; }
-  .hint { font-size: .75rem; opacity: .5; margin-top: .3rem; }
-  #cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-           gap: .8rem; }
-  .case-head { display: flex; justify-content: space-between;
-               align-items: baseline; gap: .5rem; }
-  .state { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
-           border: 1px solid color-mix(in srgb, CanvasText 30%, transparent);
-           border-radius: 999px; padding: .05rem .5rem; opacity: .8;
-           white-space: nowrap; }
-  .s-open-simulated { border-color: #4fb98a; color: #4fb98a; opacity: 1; }
-  .s-closed { opacity: .55; }
-  .invalidation { border-left: 3px solid #d96a6a; padding-left: .5rem;
-                  opacity: .85; }
-  .fill-line { font-family: ui-monospace, monospace; font-size: .8rem; }
-  .violation { color: #d96a6a; font-size: .82rem; }
-  .choices { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0; }
-  .choices button { font-size: .85rem; }
-  .choices button.selected { border-color: #4f8ef7; color: #4f8ef7; }
-  input[type=range] { flex: 1; accent-color: #4f8ef7; }
-  .readout { font-family: ui-monospace, monospace; font-size: .9rem;
-             min-width: 4.5rem; text-align: right; }
-  #liveness { display: flex; gap: .9rem; flex-wrap: wrap; align-items: baseline;
-              font-size: .8rem; margin: .1rem 0 .7rem; }
-  #liveness .ok { color: #4fb98a; }
-  #liveness .warn { color: #d96a6a; }
-  #liveness .busy { color: #f2a43a; }
+  input[type=text] { flex: 1; padding: .55rem .7rem; border-radius: 10px;
+          border: 1px solid var(--border-strong);
+          background: var(--surface-2); color: inherit; font: inherit; }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px;
+                           border-color: transparent; }
+  button, select { padding: .5rem .85rem; border-radius: 10px;
+           border: 1px solid var(--border-strong);
+           background: var(--surface-2); color: inherit; cursor: pointer;
+           font: inherit; }
+  button:hover { border-color: var(--accent); }
+  .hint { font-size: .75rem; color: var(--muted); margin-top: .35rem; }
+  #liveness { display: flex; gap: .45rem; flex-wrap: wrap; align-items: center;
+              font-size: .78rem; margin: .2rem 0 .9rem; }
+  #liveness span { border: 1px solid var(--border); border-radius: 999px;
+                   padding: .18rem .6rem; background: var(--surface); }
+  #liveness .ok { color: var(--up); }
+  #liveness .warn { color: var(--down); }
+  #liveness .busy { color: var(--warn); }
   .strip { display: flex; gap: .5rem; flex-wrap: wrap; }
-  .tick { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
-          border-radius: 8px; padding: .3rem .6rem; font-size: .85rem;
-          font-family: ui-monospace, monospace; }
-  .tick .up { color: #4fb98a; } .tick .down { color: #d96a6a; }
-  .tick.broken { border-color: #d96a6a; color: #d96a6a; }
-  .ok-line { color: #4fb98a; font-size: .85rem; margin: .3rem 0 0; }
-  select.model-select { padding: .45rem .5rem; border-radius: 8px;
-    border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
-    background: transparent; color: inherit; font-size: .85rem;
-    max-width: 14rem; }
+  .tick { border: 1px solid var(--border); border-radius: 10px;
+          padding: .4rem .7rem; font-size: .86rem; background: var(--surface-2);
+          font-family: var(--mono); }
+  .tick .up { color: var(--up); } .tick .down { color: var(--down); }
+  .tick.broken { border-color: var(--down); color: var(--down); }
+  .ok-line { color: var(--up); font-size: .85rem; margin: .3rem 0 0; }
   pre.data-body { font-size: .72rem; max-height: 14rem; overflow: auto;
                   white-space: pre-wrap; word-break: break-word;
-                  margin: .3rem 0 0; opacity: .85; }
-  .finding { font-size: .88rem; margin: .35rem 0; }
-  details.workings { border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
-                     border-radius: 10px; padding: .6rem .8rem; }
-  details.workings summary { cursor: pointer; font-size: .8rem;
-    text-transform: uppercase; letter-spacing: .06em; opacity: .6; }
-  details.workings section { border: none; padding: .4rem 0; }
+                  margin: .3rem 0 0; color: var(--muted);
+                  font-family: var(--mono); }
+  .finding { font-size: .88rem; margin: .4rem 0; }
+  details.workings { border: 1px solid var(--border); border-radius: 16px;
+                     padding: .7rem 1rem; background: var(--surface); }
+  details.workings summary { cursor: pointer; font-size: .74rem;
+    text-transform: uppercase; letter-spacing: .12em; color: var(--muted);
+    font-weight: 700; }
+  details.workings section { border: none; padding: .4rem 0;
+                             background: transparent; }
+  #trades-grid { display: grid; grid-template-columns:
+                 repeat(auto-fill, minmax(320px, 1fr)); gap: .9rem; }
+  .case-head { display: flex; justify-content: space-between;
+               align-items: baseline; gap: .5rem; }
+  .contracts { display: flex; gap: .35rem; flex-wrap: wrap; margin-top: .35rem; }
+  .contracts span { font-family: var(--mono); font-size: .78rem;
+                    border: 1px solid var(--border-strong); border-radius: 7px;
+                    padding: .12rem .5rem; }
+  .state { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em;
+           border: 1px solid var(--border-strong); border-radius: 999px;
+           padding: .1rem .55rem; color: var(--muted); white-space: nowrap;
+           font-weight: 700; }
+  .s-open-simulated { border-color: var(--up); color: var(--up); }
+  .s-watching { border-color: var(--warn); color: var(--warn); }
+  .s-closed { opacity: .55; }
+  .invalidation { border-left: 3px solid var(--down); padding-left: .55rem;
+                  color: var(--muted); }
+  .invalidation b { color: var(--down); font-size: .72rem;
+                    text-transform: uppercase; letter-spacing: .08em; }
+  .fill-line { font-family: var(--mono); font-size: .8rem; }
+  .violation { color: var(--down); font-size: .82rem; margin: .3rem 0 0; }
+  .choices { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0; }
+  .choices button { font-size: .85rem; }
+  .choices button.selected { border-color: var(--accent); color: var(--accent); }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  .readout { font-family: var(--mono); font-size: .9rem; min-width: 4.5rem;
+             text-align: right; }
+  select.model-select { max-width: 14rem; font-size: .85rem; }
+  #askdesk { margin-top: 1.1rem; border-color: rgba(91, 140, 255, .45); }
+  button.primary { border-color: var(--accent); color: var(--accent);
+                   font-weight: 650; white-space: nowrap; }
+  /* Focused conversation drawer */
+  #focus-drawer { position: fixed; top: 0; right: 0; height: 100vh;
+    width: min(430px, 92vw); background: var(--surface);
+    border-left: 1px solid var(--border-strong); z-index: 60;
+    display: none; flex-direction: column; padding: 1rem 1.1rem;
+    box-shadow: -18px 0 40px rgba(0,0,0,.35); }
+  #focus-drawer.open { display: flex; }
+  #focus-head { display: flex; align-items: baseline; gap: .6rem; }
+  #focus-head h3 { margin: 0; font-size: 1rem; flex: 1; }
+  #focus-sub { font-size: .75rem; color: var(--muted); margin: .2rem 0 .6rem; }
+  #focus-log { flex: 1; overflow-y: auto; display: flex;
+               flex-direction: column; gap: .55rem; padding-block: .4rem; }
+  .bubble { max-width: 88%; padding: .55rem .75rem; border-radius: 14px;
+            font-size: .86rem; white-space: pre-wrap; }
+  .bubble.you { align-self: flex-end; background: var(--accent);
+                color: #fff; border-bottom-right-radius: 4px; }
+  .bubble.desk { align-self: flex-start; background: var(--surface-2);
+                 border: 1px solid var(--border);
+                 border-bottom-left-radius: 4px; }
+  .bubble.busy { color: var(--muted); font-style: italic; }
 </style>
 
 <header>
   <h1 id="title">…</h1>
   <span class="muted" id="version"></span>
   <span class="muted">market research desk · paper by structure</span>
+  <span class="controls">
+    <select id="font-pick" title="typeface"></select>
+    <button id="theme-toggle" title="light / dark">◐</button>
+  </span>
 </header>
 <div id="members"></div>
 <div id="liveness"></div>
-<details><summary class="muted">What this place is for</summary>
-  <p id="framing"></p></details>
+
+<aside id="focus-drawer">
+  <div id="focus-head">
+    <h3 id="focus-title">Focused conversation</h3>
+    <button id="focus-close" title="close">✕</button>
+  </div>
+  <div id="focus-sub">Scoped to this cell's data only — nothing else enters
+    the conversation.</div>
+  <div id="focus-log"></div>
+  <form id="focus-form">
+    <input type="text" id="focus-line" autocomplete="off"
+           placeholder="Ask about this cell…">
+  </form>
+</aside>
 
 <section id="intake" hidden>
   <h2>Set up this desk</h2>
@@ -183,6 +274,115 @@ function toolData(tool, args, ttlMinutes) {
 // The agentic text box is the platform's (composer.js): the Manifold
 // mark — the fold — is the model button, the paired submit takes the
 // turn, and every invocation is routed and audited by the platform.
+// Theme and typeface are the member's: remembered locally.
+function applyTheme() {
+  document.documentElement.dataset.theme =
+    localStorage.getItem("alphalab-theme") || "dark";
+}
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const current = localStorage.getItem("alphalab-theme") || "dark";
+  localStorage.setItem("alphalab-theme",
+    current === "dark" ? "light" : "dark");
+  applyTheme();
+});
+applyTheme();
+const FONTS = {
+  "Inter": '"Inter", -apple-system, "Segoe UI", sans-serif',
+  "System": '-apple-system, "Segoe UI", "Helvetica Neue", sans-serif',
+  "Avenir": '"Avenir Next", "Avenir", -apple-system, sans-serif',
+  "Georgia": 'Georgia, "Times New Roman", serif',
+  "Mono": 'ui-monospace, "SF Mono", Menlo, monospace',
+};
+const fontPick = document.getElementById("font-pick");
+for (const name of Object.keys(FONTS))
+  fontPick.append(el("option", {value: name}, name));
+function applyFont() {
+  const chosen = localStorage.getItem("alphalab-font") || "Inter";
+  fontPick.value = chosen;
+  document.documentElement.style.setProperty("--font", FONTS[chosen]);
+}
+fontPick.addEventListener("change", () => {
+  localStorage.setItem("alphalab-font", fontPick.value);
+  applyFont();
+});
+applyFont();
+
+// Focused conversation: one cell, one thread, the member's pick of mind.
+// The prompt carries ONLY the cell (plus a trade's evidence) — nothing
+// else from the desk enters, so answers stay grounded in that data.
+let focusKey = null;
+let focusThread = [];
+function focusChip(key, spec) {
+  const chip = el("button", {class: "focus-chip", type: "button",
+    title: "focused conversation — ask about this cell only"});
+  chip.innerHTML = (window.Manifold && Manifold.mark) || "◈";
+  chip.addEventListener("click", event => {
+    event.stopPropagation();
+    openFocus(key);
+  });
+  return chip;
+}
+function openFocus(key) {
+  if (focusKey !== key) focusThread = [];
+  focusKey = key;
+  document.getElementById("focus-title").textContent = key;
+  document.getElementById("focus-drawer").classList.add("open");
+  renderFocusLog();
+  document.getElementById("focus-line").focus();
+}
+function renderFocusLog() {
+  const log = document.getElementById("focus-log");
+  log.replaceChildren(...focusThread.map(turn =>
+    el("div", {class: `bubble ${turn.who}${turn.busy ? " busy" : ""}`},
+       turn.text)));
+  log.scrollTop = log.scrollHeight;
+}
+function focusPrompt(question) {
+  const cell = lastView?.context?.[focusKey];
+  const parts = [
+    "You are AlphaLab's desk agent in a FOCUSED conversation about one",
+    "cell of a shared market-research desk (paper trading only).",
+    `Cell key: ${focusKey}`,
+    `Cell value (JSON): ${JSON.stringify(cell).slice(0, 20000)}`,
+  ];
+  if (focusKey.startsWith("trades/")) {
+    for (const evidenceKey of (cell?.evidence || []).slice(0, 8))
+      parts.push(`Evidence ${evidenceKey}: ` +
+        JSON.stringify(lastView?.context?.[evidenceKey]).slice(0, 4000));
+  }
+  parts.push("Answer from this cell's data only; keep clocks with claims;",
+    "if the data cannot answer, say exactly what is missing. Be concise.",
+    "No markdown headers. Conversation so far:");
+  for (const turn of focusThread.filter(t => !t.busy))
+    parts.push(`${turn.who === "you" ? "Member" : "Desk"}: ${turn.text}`);
+  parts.push(`Member: ${question}`, "Desk:");
+  return parts.join("\n");
+}
+document.getElementById("focus-close").addEventListener("click", () =>
+  document.getElementById("focus-drawer").classList.remove("open"));
+document.getElementById("focus-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const box = document.getElementById("focus-line");
+  const question = box.value.trim();
+  if (!question || !focusKey) return;
+  box.value = "";
+  focusThread.push({who: "you", text: question});
+  focusThread.push({who: "desk", text: "thinking…", busy: true});
+  renderFocusLog();
+  try {
+    const reply = await api("POST", `/environments/${envId}/converse`, {
+      model: chosenModel("focus") || undefined,
+      prompt: focusPrompt(question),
+    });
+    focusThread.pop();
+    focusThread.push({who: "desk", text: (reply.text || "").trim()});
+  } catch (error) {
+    focusThread.pop();
+    focusThread.push({who: "desk", text: `⚠ ${error.message}`, busy: true});
+  }
+  renderFocusLog();
+});
+
 const composerReady = new Promise((resolve, reject) => {
   const script = document.createElement("script");
   script.src = `/composer.js?token=${token}`;
@@ -202,6 +402,8 @@ const composerReady = new Promise((resolve, reject) => {
     updateLiveness();
     refresh();
   });
+  document.getElementById("focus-form")
+    .append(Manifold.modelButton({token, scope: "focus"}));
 });
 composerReady.catch(error => {
   document.getElementById("askdesk-mount").replaceChildren(
@@ -266,7 +468,6 @@ function render(view) {
 
   document.getElementById("title").textContent = view.harness.name;
   document.getElementById("version").textContent = view.harness.version;
-  document.getElementById("framing").textContent = view.harness.framing || "";
   const members = document.getElementById("members");
   members.replaceChildren(...Object.entries(view.members).map(([key, name]) =>
     el("span", {class: "chip"}, name + (key === view.you ? " (you)" : ""))));
@@ -278,8 +479,8 @@ function render(view) {
   for (const section of [
     renderWatchlist(view),
     renderPositions(view),
-    Object.keys(view.context).some(k => k.startsWith("cases/"))
-      ? renderCases(view) : null,
+    Object.keys(view.context).some(k => k.startsWith("trades/"))
+      ? renderTrades(view) : null,
     renderWidgets(view),
     renderFindings(view),
     renderConversation(view),
@@ -382,7 +583,7 @@ function renderWatchlist(view) {
 
 function renderPositions(view) {
   const rows = Object.entries(view.context).filter(([key, c]) =>
-    key.startsWith("cases/") && c &&
+    key.startsWith("trades/") && c &&
     (c.state === "open-simulated" || (c.state === "closed" && c.fill)));
   if (!rows.length) return null;
   const section = el("section", {class: "full"});
@@ -395,7 +596,8 @@ function renderPositions(view) {
   table.append(head);
   for (const [key, c] of rows) {
     const line = el("tr");
-    line.append(el("td", {}, c.contract || key.slice(6)));
+    line.append(el("td", {},
+      (c.contracts || []).join(" + ") || (c.fill || {}).contract || key.slice(7)));
     const stateCell = el("td");
     stateCell.append(el("span", {class: `state s-${c.state}`}, c.state));
     line.append(stateCell);
@@ -585,7 +787,7 @@ function renderIntake(view) {
 
 function renderWidgets(view) {
   const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "Desk"));
+  section.append(el("h2", {}, "AlphaLab"));
   const deck = el("div", {id: "deck"});
   const cards = Object.entries(view.context)
     .filter(([key, value]) => key.startsWith("widgets/") && value)
@@ -596,7 +798,10 @@ function renderWidgets(view) {
     const card = el("div", {class: "card"});
     if (spec.pinned === true) card.classList.add("pinned");
     if (["compact", "wide", "full"].includes(spec.size)) card.classList.add(spec.size);
-    card.append(el("h3", {}, spec.title || key.slice(8)));
+    const cardHead = el("div", {class: "card-head"});
+    cardHead.append(el("h3", {}, spec.title || key.slice(8)));
+    cardHead.append(focusChip(key, spec));
+    card.append(cardHead);
     if (spec.kind === "metric") {
       card.append(el("div", {class: "metric"}, String(spec.value ?? "—")));
       if (spec.label) card.append(el("div", {class: "metric-label"}, spec.label));
@@ -624,6 +829,40 @@ function renderWidgets(view) {
       } else {
         card.append(el("p", {}, spec.body || ""));
       }
+    } else if (spec.kind === "slider") {
+      // Interactive: drag, release, and the value lands at answers/<id>
+      // for the agents to read on their next turn.
+      const answerKey = "answers/" + key.slice(8);
+      const current = view.context[answerKey] ?? spec.value ?? spec.min ?? 0;
+      const row = el("div", {style: "display:flex;align-items:center;gap:.6rem"});
+      const slider = el("input", {type: "range",
+        min: spec.min ?? 0, max: spec.max ?? 100, step: spec.step ?? 1,
+        value: current});
+      const readout = el("span", {class: "readout"});
+      const show = () => readout.textContent =
+        `${spec.unit || ""}${Number(slider.value)}`;
+      slider.addEventListener("input", show);
+      slider.addEventListener("change", () =>
+        api("POST", `/environments/${envId}/context`,
+            {key: answerKey, value: Number(slider.value)}).then(refresh));
+      show();
+      row.append(slider, readout);
+      if (spec.label) card.append(el("p", {class: "muted"}, spec.label));
+      card.append(row);
+    } else if (spec.kind === "choices") {
+      const answerKey = "answers/" + key.slice(8);
+      const chosen = view.context[answerKey];
+      const row = el("div", {class: "choices"});
+      for (const option of spec.options || []) {
+        const pick = el("button", {type: "button"}, String(option));
+        if (option === chosen) pick.classList.add("selected");
+        pick.addEventListener("click", () =>
+          api("POST", `/environments/${envId}/context`,
+              {key: answerKey, value: option}).then(refresh));
+        row.append(pick);
+      }
+      if (spec.question) card.append(el("p", {}, spec.question));
+      card.append(row);
     } else if (spec.kind === "ask") {
       card.style.borderColor = "color-mix(in srgb, CanvasText 45%, transparent)";
       card.append(el("p", {}, spec.question || ""));
@@ -719,7 +958,7 @@ function renderWidgets(view) {
   return section;
 }
 
-// One rulebook: the engine's case_check is the only implementation of the
+// One rulebook: the engine's trade_check is the only implementation of the
 // case contract. The client caches verdicts per exact case value and renders
 // them; it adds only the checks the engine cannot see from a tool call —
 // whether the referenced answer entry actually exists on this desk.
@@ -730,12 +969,12 @@ function engineViolations(key, spec) {
   if (caseVerdicts.has(fingerprint)) return caseVerdicts.get(fingerprint);
   if (!caseChecksPending.has(fingerprint)) {
     caseChecksPending.add(fingerprint);
-    api("POST", `/environments/${envId}/tools/case_check`,
-        {args: {case: spec, id: key.slice(6)}})
+    api("POST", `/environments/${envId}/tools/trade_check`,
+        {args: {trade: spec, id: key.slice(7)}})
       .then(reply => caseVerdicts.set(fingerprint,
         reply.result?.data?.violations ?? reply.result?.gaps ?? []))
       .catch(error => caseVerdicts.set(fingerprint,
-        [`case_check did not answer: ${error.message}`]))
+        [`trade_check did not answer: ${error.message}`]))
       .finally(() => {
         caseChecksPending.delete(fingerprint);
         lastRendered = "";
@@ -746,37 +985,46 @@ function engineViolations(key, spec) {
 }
 
 
-function renderCases(view) {
+function renderTrades(view) {
   const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "Cases"));
-  const grid = el("div", {id: "cases"});
+  section.append(el("h2", {}, "Trades"));
+  const grid = el("div", {id: "trades-grid"});
   const order = {"open-simulated": 0, "watching": 1, "idea": 2, "closed": 3};
   const entries = Object.entries(view.context)
-    .filter(([key, value]) => key.startsWith("cases/") && value)
+    .filter(([key, value]) => key.startsWith("trades/") && value)
     .sort(([a], [b]) => a.localeCompare(b))
     .sort(([, a], [, b]) => (order[a?.state] ?? 4) - (order[b?.state] ?? 4));
   for (const [key, spec] of entries) {
     const card = el("div", {class: "card"});
     const head = el("div", {class: "case-head"});
-    head.append(el("h3", {}, (spec && spec.contract) || key.slice(6)));
+    head.append(el("h3", {}, key.slice(7).replace(/-/g, " ")));
+    head.append(focusChip(key, spec));
     head.append(el("span", {class: `state s-${spec?.state}`},
       String(spec?.state ?? "?")));
     card.append(head);
+    const contracts = el("div", {class: "contracts"});
+    for (const contract of spec?.contracts || [])
+      contracts.append(el("span", {}, String(contract)));
+    if (contracts.childNodes.length) card.append(contracts);
     if (spec?.thesis) card.append(el("p", {}, spec.thesis));
-    if (spec?.invalidation)
-      card.append(el("p", {class: "invalidation"}, `Wrong if: ${spec.invalidation}`));
+    if (spec?.invalidation) {
+      const line = el("p", {class: "invalidation"});
+      line.append(el("b", {}, "Invalidation "));
+      line.append(document.createTextNode(spec.invalidation));
+      card.append(line);
+    }
     for (const [label, f] of [["fill", spec?.fill], ["exit", spec?.exit]]) {
       if (!f) continue;
       card.append(el("p", {class: "fill-line"},
-        `${label}: ${f.quantity} @ $${f.price} · live market ` +
-        `${f.bid} × ${f.ask} · ${f.observed_at}`));
+        `${label}: ${f.quantity} × ${f.contract || "?"} @ $${f.price} · ` +
+        `live market ${f.bid} × ${f.ask} · ${f.observed_at}`));
     }
     if (Array.isArray(spec?.evidence) && spec.evidence.length)
       card.append(el("p", {class: "muted"}, `evidence: ${spec.evidence.join(" · ")}`));
     if (spec?.as_of) card.append(el("div", {class: "as-of"}, `as of ${spec.as_of}`));
     const engine = engineViolations(key, spec);
     if (engine === null) {
-      card.append(el("p", {class: "muted"}, "checking the case contract…"));
+      card.append(el("p", {class: "muted"}, "checking the trade contract…"));
     } else {
       for (const problem of engine)
         card.append(el("p", {class: "violation"}, `⚠ ${problem}`));
