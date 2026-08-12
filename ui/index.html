@@ -833,8 +833,13 @@ function renderPositions(view) {
         String(f.observed_at).slice(0, 10)
       : "—"));
     const pnl = el("td", {class: "val"}, "—");
-    const held = contractLabel((c.fill || {}).contract
-      || (c.contracts || [])[0] || "");
+    // Prefer a label the stream lane can parse (the canonical 8-digit
+    // date form) — a fill recorded in display notation ("NVDA 8/21
+    // 235C") would otherwise quote the STOCK and mark the option wrong.
+    const held = [...(c.contracts || []), (c.fill || {}).contract]
+      .map(contractLabel)
+      .find(x => x && contractArgs(x).sec_type === "OPT")
+      || contractLabel((c.fill || {}).contract || (c.contracts || [])[0] || "");
     if (c.state === "open-simulated" && f && held) {
       pnl.textContent = "…";
       pnlWatch.set(key, {cell: pnl, entry: f.price,

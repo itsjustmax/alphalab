@@ -360,6 +360,20 @@ class AutopilotPlans(unittest.TestCase):
         self.assertEqual(pilot.said.count("[plan nvda] watching"), 1)
 
 
+class DisplayNotationFills(unittest.TestCase):
+    def test_close_streams_the_canonical_contract(self):
+        # A fill recorded in display notation must not quote the stock.
+        context = _live_context()
+        context["trades/nvda"]["fill"]["contract"] = "NVDA 8/21 235C"
+        pilot = _pilot(context, {"live_quote":
+                                 {"quote": {"bid": 1.92, "ask": 1.94}}})
+        pilot.manage_plans(context, NOW)
+        args = context["widgets/fill-nvda-exit"]["refresh"]["args"]
+        self.assertEqual(args["sec_type"], "OPT")
+        self.assertEqual(args["expiration"], "20260821")
+        self.assertEqual(args["contract"], "NVDA 20260821 235C")
+
+
 class ContractParsing(unittest.TestCase):
     def test_option_label(self):
         parsed = autopilot.parse_contract_label("NVDA 20260821 235C")

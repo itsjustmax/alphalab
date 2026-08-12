@@ -562,7 +562,15 @@ class Pilot:
 
         kind = action["action"]
         card_key = f"widgets/fill-{trade_id}-exit"
+        # The exit must stream the OPTION, so prefer a label that parses
+        # to full contract args — a fill recorded in display notation
+        # ("NVDA 8/21 235C") has no 8-digit date and would quote the stock.
         label = str((trade.get("fill") or {}).get("contract") or trade_id)
+        if "expiration" not in parse_contract_label(label):
+            for candidate in (trade.get("contracts") or []):
+                if "expiration" in parse_contract_label(str(candidate)):
+                    label = str(candidate)
+                    break
         if kind == "note":
             text = str(action.get("text") or "").strip()
             if text and text != update.get("last_note"):
