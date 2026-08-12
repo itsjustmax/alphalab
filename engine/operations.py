@@ -9,9 +9,11 @@ is present. Every answer is a receipt: ok, summary, data, as_of, gaps.
 
 import datetime
 import json
-import os
 import urllib.parse
 import urllib.request
+
+import bridge
+import gates
 
 
 def _now() -> str:
@@ -114,12 +116,10 @@ def price_summary(arguments):
 
 
 def capabilities(arguments):
-    agents = os.environ.get("ALPHALAB_AGENTS_REPO", "/Users/max/Bots/AlphalabAgents")
-    bridge = os.environ.get("ALPHALAB_BRIDGE_REPO", "/Users/max/Bots/manifold-harness-alphalab")
-    full = (os.path.isfile(f"{agents}/.venv/bin/python")
-            and os.path.isfile(f"{bridge}/provider/alphalab_manifold_provider.py"))
+    full = bridge.available()
     lanes = {
         "inline (daily bars, summaries)": True,
+        "paper gates (case_check; fill_check needs the quote lane)": True,
         "full engine (broker quotes, options, dealer gamma)": full,
     }
     summary = ("full engine present — every tool is live" if full else
@@ -132,6 +132,8 @@ OPERATIONS = {
     "daily_bars": daily_bars,
     "price_summary": price_summary,
     "capabilities": capabilities,
+    "case_check": gates.case_check,
+    "fill_check": gates.fill_check,
 }
 
 
