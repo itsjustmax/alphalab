@@ -28,5 +28,20 @@ into `series.0.points`; a candle card: value_path
 `result.data.candles`, into `candles`); full-engine tools
 `result.payload_json.answer.<field>`.
 
+Fill confirmations are ask cards with a fixed contract: the card lives at
+`widgets/fill-<case-id>`, its body is the `ask_card` a passing
+`fill_check` receipt answered with (receipted market and clock included,
+options exactly ["Confirm fill", "Stand down"]), and the member's answer
+lands at `answers/fill-<case-id>`. Never compose one by hand — the only
+sanctioned card is the one the receipt produced. After acting on the
+answer, remove the card; the answer key stays, because a recorded fill's
+`confirmed` field points at it.
+
+Cases render from `cases/<id>` directly (they are not widgets): state
+badge, thesis, invalidation, evidence, and the fill with its receipted
+market, clock, and confirmation. A case that breaks the contract renders
+its violations in red — run `case_check` before writing to keep the desk
+clean.
+
 House rules: one pinned `widgets/brief` Today card; 6-10 cards; clocks
 on data; failures named in titles; the member's answers visible.

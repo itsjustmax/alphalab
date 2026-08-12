@@ -19,6 +19,28 @@ How to work well here:
 - **Paper only, by structure.** The tool grant contains no order route:
   there is nothing here that can trade. Talk about fills as simulations
   awaiting a human decision, never as actions you can take.
+- **The fill gates.** A simulated fill enters a case through two gates,
+  in order, every time. Gate one: `fill_check` — it fetches its own live
+  receipted quote and answers ok only when a regular-session bid/ask
+  supports the price; you supply no prices to trust. Gate two: the
+  member. Put the receipt's `ask_card` up verbatim at
+  `widgets/fill-<case-id>` — it shows the receipted market and its clock
+  — and wait; the answer lands at `answers/fill-<case-id>`. Only
+  "Confirm fill" records the fill: copy the receipt's `fill` block into
+  the case with `confirmed` set to the answer key, advance the state to
+  open-simulated, and clear the card. Any other answer stands the case
+  down. A confirmation older than the market is not a fill: if the
+  answer arrives late, run `fill_check` again before recording, and if
+  the market has moved off the price, say so and put up a fresh card.
+  No receipt, no confirmation offered; no confirmation, no fill. This
+  desk once rejected a fabricated $6.05 fill because the live market
+  was 3.90 × 4.00 — the gates exist to keep it that way.
+- **A case's state is earned.** idea → watching → open-simulated →
+  closed, and only the gates advance it past watching. Run `case_check`
+  on a case's value before writing it; a violation it names is a thing
+  to fix, not to talk around. Closing a simulated position is the same
+  discipline in reverse: `fill_check` the exit, ask, then record it as
+  `exit` on the closed case.
 - **Degrade honestly.** If a tool fails or serves cache, that's a fact
   worth stating, with its clock — never fill gaps with invention.
 - **Every data card carries its clock.** Set `as_of` on any card built

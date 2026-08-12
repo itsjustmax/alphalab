@@ -1,13 +1,14 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "symbols under active attention",
     "quotes/": "one key per symbol: the latest receipted quote",
     "findings/": "one key per finding: evidence worth keeping, with its source clock",
-    "cases/": "one key per trade idea, named contract + thesis (e.g. 'AAPL 8/14 312.50C - long on supply-lid break'); value carries thesis, evidence keys, invalidation, state: idea|watching|open|closed",
+    "cases/": "one key per trade case: {contract, thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill is null until the gates pass: fill_check ok (live receipted regular-session bid/ask supporting the price) AND the member's ask-card confirmation; then it is the receipt's exact {price, bid, ask, quantity, observed_at, confirmed: 'answers/fill-<id>'} block. exit: same shape, closed cases only. Run case_check before writing.",
+    "answers/": "the member's replies to ask cards, one key per card id; a fill's confirmed field names its answer key here",
     "widgets/": "the desk: one declarative card per key (widgets convention)",
     "widgets/brief": "the pinned Today card: what the desk is doing and what needs eyes"
   },
@@ -45,6 +46,39 @@
         "python3",
         "tools/run.py",
         "daily_bars"
+      ]
+    },
+    {
+      "name": "case_check",
+      "description": "Validate one cases/<id> value against the case contract: thesis, evidence keys, invalidation always written, honest state, and the fill gates. Answers every violation by name.",
+      "args": {
+        "case": "the cases/<id> value to check",
+        "id": "the case id, for the summary"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "case_check"
+      ]
+    },
+    {
+      "name": "fill_check",
+      "description": "The simulated-fill gate. Fetches its own live receipted quote, verifies regular session, freshness, and that the price sits inside bid/ask, then answers with the exact confirmation ask card and fill block. No live receipt, no confirmation offered.",
+      "args": {
+        "symbol": "ticker, e.g. NVDA",
+        "sec_type": "STK (default), OPT, FUT, IND",
+        "expiration": "options: YYYYMMDD",
+        "strike": "options: strike price",
+        "right": "options: C or P",
+        "price": "the simulated fill price to verify",
+        "quantity": "whole contracts, 1-100",
+        "action": "buy (default) or sell",
+        "contract": "display label for the card, e.g. 'NVDA 8/14 190C'"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "fill_check"
       ]
     },
     {
@@ -183,18 +217,30 @@
   "questions": [
     {
       "key": "watchlist",
-      "question": "Which underlyings should the desk watch?",
-      "placeholder": "NVDA, AMD, SPX"
+      "question": "Which underlyings or topics should the desk watch?",
+      "placeholder": "NVDA, AMD, SPX — or themes: semis into earnings, rate-sensitive names"
     },
     {
       "key": "premium_ceiling",
       "question": "Maximum contract premium, in dollars?",
-      "placeholder": "6.00"
+      "kind": "range",
+      "min": 0.25,
+      "max": 25,
+      "step": 0.25,
+      "default": 6,
+      "unit": "$"
     },
     {
       "key": "focus",
       "question": "What should the desk focus on right now?",
-      "placeholder": "semis into earnings; the gamma regime"
+      "kind": "choice",
+      "options": [
+        "0–2DTE momentum scalps",
+        "swings into dated catalysts",
+        "the dealer gamma regime",
+        "earnings names this week"
+      ],
+      "placeholder": "or say it your way…"
     }
   ]
 }
