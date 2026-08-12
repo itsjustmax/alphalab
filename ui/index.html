@@ -55,6 +55,26 @@
            color-mix(in srgb, CanvasText 25%, transparent);
            background: transparent; color: inherit; cursor: pointer; }
   .hint { font-size: .75rem; opacity: .5; margin-top: .3rem; }
+  #cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+           gap: .8rem; }
+  .case-head { display: flex; justify-content: space-between;
+               align-items: baseline; gap: .5rem; }
+  .state { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
+           border: 1px solid color-mix(in srgb, CanvasText 30%, transparent);
+           border-radius: 999px; padding: .05rem .5rem; opacity: .8;
+           white-space: nowrap; }
+  .s-open-simulated { border-color: #4fb98a; color: #4fb98a; opacity: 1; }
+  .s-closed { opacity: .55; }
+  .invalidation { border-left: 3px solid #d96a6a; padding-left: .5rem;
+                  opacity: .85; }
+  .fill-line { font-family: ui-monospace, monospace; font-size: .8rem; }
+  .violation { color: #d96a6a; font-size: .82rem; }
+  .choices { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0; }
+  .choices button { font-size: .85rem; }
+  .choices button.selected { border-color: #4f8ef7; color: #4f8ef7; }
+  input[type=range] { flex: 1; accent-color: #4f8ef7; }
+  .readout { font-family: ui-monospace, monospace; font-size: .9rem;
+             min-width: 4.5rem; text-align: right; }
 </style>
 
 <header>
@@ -80,13 +100,22 @@
 </form>
 <p class="hint">@Name text → ask · key=value → shared context · anything else → say</p>
 
-<script src="ui/d3.min.js"></script>
-<script src="ui/d3-sankey.min.js"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const token = params.get("token");
 const envId = location.pathname.split("/").filter(Boolean)[1];
 const headers = {"X-Manifold-Token": token, "Content-Type": "application/json"};
+
+// Chart libraries ship with the harness; the service serves them per
+// environment, token-authorized — so they load here, not via <script src>.
+const assetsReady = ["d3.min.js", "d3-sankey.min.js"].reduce(
+  (chain, name) => chain.then(() => new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `/app/${envId}/ui/${name}?token=${token}`;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`${name} failed to load`));
+    document.head.append(script);
+  })), Promise.resolve());
 
 async function api(method, path, body) {
   const response = await fetch(path, {method, headers,
@@ -103,7 +132,13 @@ function el(tag, attrs = {}, text = "") {
 }
 
 let you = "";
+let lastRendered = "";
 function render(view) {
+  // Re-render only on real change: a quiet 5s poll must not wipe
+  // hover state or half-built interactions.
+  const fingerprint = JSON.stringify(view);
+  if (fingerprint === lastRendered) return;
+  lastRendered = fingerprint;
   you = view.you;
   document.getElementById("title").textContent = view.harness.name;
   document.getElementById("version").textContent = view.harness.version;
@@ -115,6 +150,8 @@ function render(view) {
   renderIntake(view);
   const container = document.getElementById("views");
   container.replaceChildren();
+  if (Object.keys(view.context).some(k => k.startsWith("cases/")))
+    container.append(renderCases(view));
   for (const declared of view.harness.views) {
     if (declared.component === "widgets") container.append(renderWidgets(view));
     else if (declared.component === "board") container.append(renderBoard(view));
@@ -151,9 +188,38 @@ function renderIntake(view) {
   form.style.alignItems = "stretch";
   for (const q of questions) {
     const label = el("label", {style: "font-size:.85rem;opacity:.75;margin-top:.4rem"}, q.question);
-    const input = el("input", {type: "text", id: `q-${q.key}`,
-      placeholder: q.placeholder || "", value: view.context["intake/" + q.key] || ""});
-    form.append(label, input);
+    form.append(label);
+    const existing = view.context["intake/" + q.key];
+    if (q.kind === "range") {
+      const row = el("div", {style: "display:flex;align-items:center;gap:.6rem"});
+      const slider = el("input", {type: "range",
+        min: q.min ?? 0, max: q.max ?? 100, step: q.step ?? 1,
+        id: `q-${q.key}`, value: existing ?? q.default ?? q.min ?? 0});
+      const readout = el("span", {class: "readout"});
+      const show = () => readout.textContent =
+        (q.unit || "") + Number(slider.value).toFixed(2);
+      slider.addEventListener("input", show);
+      show();
+      row.append(slider, readout);
+      form.append(row);
+    } else if (q.kind === "choice") {
+      const input = el("input", {type: "text", id: `q-${q.key}`,
+        placeholder: q.placeholder || "", value: existing || ""});
+      const row = el("div", {class: "choices"});
+      const mark = () => { for (const b of row.children)
+        b.classList.toggle("selected", b.textContent === input.value.trim()); };
+      for (const option of q.options || []) {
+        const pick = el("button", {type: "button"}, String(option));
+        pick.addEventListener("click", () => { input.value = option; mark(); });
+        row.append(pick);
+      }
+      input.addEventListener("input", mark);
+      mark();
+      form.append(row, input);
+    } else {
+      form.append(el("input", {type: "text", id: `q-${q.key}`,
+        placeholder: q.placeholder || "", value: existing || ""}));
+    }
   }
   const button = el("button", {style: "margin-top:.6rem"}, "Build the desk");
   form.append(button);
@@ -232,7 +298,9 @@ function renderWidgets(view) {
     } else if (["line", "bar", "candle", "scatter", "ladder", "flow", "treemap"]
                .includes(spec.kind)) {
       card.classList.add("chart");
-      if (spec.wide !== false) card.classList.add("wide");
+      // Charts read best at full width; an explicit size still wins.
+      if (!["compact", "standard", "wide", "full"].includes(spec.size))
+        card.classList.add("full");
       card.append(renderChart(spec));
     } else {
       card.append(el("p", {class: "muted"}, `[${spec.kind}] not rendered yet`));
@@ -243,10 +311,84 @@ function renderWidgets(view) {
   return section;
 }
 
+function caseProblems(spec, context) {
+  // The UI's mirror of the engine's paper gates (engine/gates.py) —
+  // a case that breaks the contract renders its violations, never hides them.
+  if (!spec || typeof spec !== "object") return ["not a case object"];
+  const problems = [];
+  for (const field of ["contract", "thesis", "invalidation"])
+    if (!String(spec[field] ?? "").trim()) problems.push(`missing ${field}`);
+  const states = ["idea", "watching", "open-simulated", "closed"];
+  if (!states.includes(spec.state))
+    problems.push(`state "${spec.state}" is not one of ${states.join(" | ")}`);
+  if (["open-simulated", "closed"].includes(spec.state) && !spec.fill)
+    problems.push(`GATE BROKEN — no receipted fill behind an ${spec.state} state`);
+  if (["idea", "watching"].includes(spec.state) && spec.fill)
+    problems.push("GATE BROKEN — a fill recorded before open-simulated");
+  if (spec.exit && spec.state !== "closed")
+    problems.push("an exit belongs only on a closed case");
+  for (const [label, f] of [["fill", spec.fill], ["exit", spec.exit]]) {
+    if (!f) continue;
+    const price = Number(f.price), bid = Number(f.bid), ask = Number(f.ask);
+    if (!(bid <= price && price <= ask))
+      problems.push(`GATE BROKEN — ${label} $${price} sits outside its receipted market ${bid} × ${ask}`);
+    if (!(Number(f.quantity) >= 1 && Number(f.quantity) <= 100))
+      problems.push(`${label} quantity out of range`);
+    if (!f.observed_at) problems.push(`${label} carries no quote clock`);
+    if (!f.confirmed) problems.push(`UNCONFIRMED — no member confirmation on the ${label}`);
+    else if (!(f.confirmed in context))
+      problems.push(`UNCONFIRMED — ${f.confirmed} not found on this desk`);
+    else if (String(context[f.confirmed]) !== "Confirm fill")
+      problems.push(`the answer at ${f.confirmed} does not read "Confirm fill"`);
+  }
+  return problems;
+}
+
+function renderCases(view) {
+  const section = el("section", {class: "full"});
+  section.append(el("h2", {}, "Cases"));
+  const grid = el("div", {id: "cases"});
+  const order = {"open-simulated": 0, "watching": 1, "idea": 2, "closed": 3};
+  const entries = Object.entries(view.context)
+    .filter(([key, value]) => key.startsWith("cases/") && value)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([, a], [, b]) => (order[a?.state] ?? 4) - (order[b?.state] ?? 4));
+  for (const [key, spec] of entries) {
+    const card = el("div", {class: "card"});
+    const head = el("div", {class: "case-head"});
+    head.append(el("h3", {}, (spec && spec.contract) || key.slice(6)));
+    head.append(el("span", {class: `state s-${spec?.state}`},
+      String(spec?.state ?? "?")));
+    card.append(head);
+    if (spec?.thesis) card.append(el("p", {}, spec.thesis));
+    if (spec?.invalidation)
+      card.append(el("p", {class: "invalidation"}, `Wrong if: ${spec.invalidation}`));
+    for (const [label, f] of [["fill", spec?.fill], ["exit", spec?.exit]]) {
+      if (!f) continue;
+      const confirmed = f.confirmed && view.context[f.confirmed] === "Confirm fill";
+      card.append(el("p", {class: "fill-line"},
+        `${label}: ${f.quantity} @ $${f.price} · market ${f.bid} × ${f.ask}` +
+        ` · ${f.observed_at}${confirmed ? " · confirmed ✓" : ""}`));
+    }
+    if (Array.isArray(spec?.evidence) && spec.evidence.length)
+      card.append(el("p", {class: "muted"}, `evidence: ${spec.evidence.join(" · ")}`));
+    if (spec?.as_of) card.append(el("div", {class: "as-of"}, `as of ${spec.as_of}`));
+    for (const problem of caseProblems(spec, view.context))
+      card.append(el("p", {class: "violation"}, `⚠ ${problem}`));
+    grid.append(card);
+  }
+  section.append(grid);
+  return section;
+}
+
 function renderChart(spec) {
+  if (typeof d3 === "undefined")
+    return el("p", {class: "violation"}, "⚠ chart library not loaded — the chart cannot render");
   const tall = ["ladder", "treemap", "flow", "candle"].includes(spec.kind);
-  const width = 520, height = tall ? 300 : 240;
-  const margin = {top: 12, right: 14, bottom: 34, left: spec.kind === "ladder" ? 86 : 46};
+  const width = 860, height = tall ? 360 : 300;
+  const margin = {top: 24, bottom: 34,
+    right: ["scatter", "ladder", "flow", "treemap", "bar"].includes(spec.kind) ? 14 : 56,
+    left: spec.kind === "ladder" ? 86 : 46};
   const svg = d3.create("svg").attr("viewBox", `0 0 ${width} ${height}`);
   const inner = {w: width - margin.left - margin.right,
                  h: height - margin.top - margin.bottom};
@@ -255,10 +397,41 @@ function renderChart(spec) {
   const gridColor = "color-mix(in srgb, CanvasText 12%, transparent)";
   const palette = ["#4f8ef7", "#f2a43a", "#4fb98a", "#d96a6a", "#9a7bd6", "#5ec4d6"];
   const up = "#4fb98a", down = "#d96a6a";
+  const fmt = v => Math.abs(+v) >= 1000 ? d3.format(",.0f")(+v) : d3.format(".2f")(+v);
 
   function styleAxis(selection) {
     selection.selectAll("path,line").attr("stroke", axisColor);
     selection.selectAll("text").attr("fill", axisColor).attr("font-size", "10px");
+  }
+
+  // Crosshair + readout: hover anywhere on the plot, read the nearest datum.
+  function hover(items, xOf, textOf) {
+    if (!items.length) return;
+    const cross = g.append("line").attr("y1", 0).attr("y2", inner.h)
+      .attr("stroke", axisColor).attr("stroke-dasharray", "3,3")
+      .style("display", "none");
+    const readout = g.append("text").attr("x", inner.w).attr("y", -8)
+      .attr("text-anchor", "end").attr("fill", "CanvasText")
+      .attr("font-size", "11px").style("display", "none");
+    svg.append("rect")
+      .attr("x", margin.left).attr("y", margin.top)
+      .attr("width", inner.w).attr("height", inner.h)
+      .attr("fill", "transparent")
+      .on("pointermove", event => {
+        const [px] = d3.pointer(event, g.node());
+        let best = null, gap = Infinity;
+        for (const item of items) {
+          const distance = Math.abs(xOf(item) - px);
+          if (distance < gap) { gap = distance; best = item; }
+        }
+        if (best === null) return;
+        cross.style("display", null).attr("x1", xOf(best)).attr("x2", xOf(best));
+        readout.style("display", null).text(textOf(best));
+      })
+      .on("pointerleave", () => {
+        cross.style("display", "none");
+        readout.style("display", "none");
+      });
   }
 
   if (spec.kind === "candle") {
@@ -269,9 +442,9 @@ function renderChart(spec) {
     const y = d3.scaleLinear()
       .domain([d3.min(candles, c => c.low), d3.max(candles, c => c.high)]).nice()
       .range([inner.h, 0]);
-    g.append("g").call(d3.axisLeft(y).ticks(5).tickSize(-inner.w))
+    g.append("g").call(d3.axisLeft(y).ticks(6).tickSize(-inner.w))
       .call(styleAxis).selectAll("line").attr("stroke", gridColor);
-    const ticks = x.domain().filter((_, i, all) => i % Math.ceil(all.length / 6) === 0);
+    const ticks = x.domain().filter((_, i, all) => i % Math.ceil(all.length / 9) === 0);
     g.append("g").attr("transform", `translate(0,${inner.h})`)
       .call(d3.axisBottom(x).tickValues(ticks).tickSize(0)).call(styleAxis);
     const stick = g.selectAll("g.candle").data(candles).join("g");
@@ -287,6 +460,19 @@ function renderChart(spec) {
       .attr("height", c => Math.max(1, Math.abs(y(c.open) - y(c.close))))
       .attr("rx", 1)
       .attr("fill", c => c.close >= c.open ? up : down);
+    const last = candles[candles.length - 1];
+    if (last) {
+      g.append("line").attr("x1", 0).attr("x2", inner.w)
+        .attr("y1", y(last.close)).attr("y2", y(last.close))
+        .attr("stroke", last.close >= last.open ? up : down)
+        .attr("stroke-dasharray", "4,3").attr("stroke-opacity", 0.7);
+      g.append("text").attr("x", inner.w + 4).attr("y", y(last.close) + 3)
+        .attr("fill", last.close >= last.open ? up : down)
+        .attr("font-size", "11px").attr("font-weight", "600")
+        .text(fmt(last.close));
+    }
+    hover(candles, c => x(c.date) + x.bandwidth() / 2,
+      c => `${c.date}   O ${fmt(c.open)}  H ${fmt(c.high)}  L ${fmt(c.low)}  C ${fmt(c.close)}`);
   } else if (spec.kind === "scatter") {
     const points = (spec.points || []).map(p =>
       ({x: +p.x, y: +p.y, label: p.label, size: +p.size || 4}));
@@ -394,6 +580,8 @@ function renderChart(spec) {
       .attr("height", b => Math.abs(y(+b.value) - y(0)))
       .attr("rx", 2)
       .attr("fill", (b, i) => +b.value < 0 ? palette[3] : palette[0]);
+    hover(bars, b => x(String(b.label)) + x.bandwidth() / 2,
+      b => `${b.label}   ${fmt(b.value)}`);
   } else {
     const series = (spec.series || []).map(s => ({
       name: s.name,
@@ -406,16 +594,43 @@ function renderChart(spec) {
       .domain(d3.extent(all, p => p[0])).range([0, inner.w]);
     const y = d3.scaleLinear().domain(d3.extent(all, p => p[1])).nice()
       .range([inner.h, 0]);
-    g.append("g").call(d3.axisLeft(y).ticks(4).tickSize(-inner.w))
+    g.append("g").call(d3.axisLeft(y).ticks(6).tickSize(-inner.w))
       .call(styleAxis).selectAll("line").attr("stroke", gridColor);
     g.append("g").attr("transform", `translate(0,${inner.h})`)
-      .call(d3.axisBottom(x).ticks(5).tickSize(0)).call(styleAxis);
+      .call(d3.axisBottom(x).ticks(7).tickSize(0)).call(styleAxis);
+    if (series.length === 1 && series[0].points.length) {
+      const gradientId = `grad-${Math.abs(d3.sum(series[0].points, p => +p[1])).toString(36).replace(".", "")}`;
+      const gradient = svg.append("defs").append("linearGradient")
+        .attr("id", gradientId)
+        .attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", 1);
+      gradient.append("stop").attr("offset", "0%")
+        .attr("stop-color", palette[0]).attr("stop-opacity", 0.22);
+      gradient.append("stop").attr("offset", "100%")
+        .attr("stop-color", palette[0]).attr("stop-opacity", 0);
+      g.append("path").datum(series[0].points)
+        .attr("fill", `url(#${gradientId})`)
+        .attr("d", d3.area().x(p => x(p[0])).y0(inner.h).y1(p => y(p[1])));
+    }
     const line = d3.line().x(p => x(p[0])).y(p => y(p[1]));
     for (const [index, s] of series.entries()) {
+      const color = palette[index % palette.length];
       g.append("path").datum(s.points)
-        .attr("fill", "none").attr("stroke", palette[index % palette.length])
-        .attr("stroke-width", 1.8).attr("d", line);
+        .attr("fill", "none").attr("stroke", color)
+        .attr("stroke-width", 2).attr("d", line);
+      const last = s.points[s.points.length - 1];
+      if (last) {
+        g.append("circle").attr("cx", x(last[0])).attr("cy", y(last[1]))
+          .attr("r", 3).attr("fill", color);
+        g.append("text").attr("x", x(last[0]) + 6).attr("y", y(last[1]) + 3)
+          .attr("fill", color).attr("font-size", "11px")
+          .attr("font-weight", "600").text(fmt(last[1]));
+      }
     }
+    const label = p => isTime ? p[0].toISOString().slice(0, 10) : String(p[0]);
+    const named = series.flatMap(s =>
+      s.points.map(p => ({p, name: s.name})));
+    hover(named, item => x(item.p[0]), item =>
+      `${label(item.p)}   ${item.name ? item.name + " " : ""}${fmt(item.p[1])}`);
     if (series.length > 1) {
       const legend = g.append("g").attr("font-size", "10px");
       series.forEach((s, index) => {
@@ -440,7 +655,7 @@ function renderBoard(view) {
   section.append(el("h2", {}, "Context"));
   const table = el("table");
   const entries = Object.entries(view.context)
-    .filter(([key]) => !key.startsWith("widgets/"));
+    .filter(([key]) => !key.startsWith("widgets/") && !key.startsWith("cases/"));
   if (!entries.length) table.append(el("tr", {}).appendChild(el("td", {class: "muted"}, "empty")).parentNode);
   for (const [key, value] of entries) {
     const row = el("tr");
@@ -516,7 +731,7 @@ document.getElementById("composer").addEventListener("submit", async event => {
   } catch (error) { alert(error.message); }
 });
 
-refresh();
+assetsReady.catch(error => console.error(error)).then(refresh);
 const stream = new EventSource(`/environments/${envId}/events?token=${token}`);
 stream.onmessage = () => refresh();
 setInterval(refresh, 5000);
