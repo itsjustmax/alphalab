@@ -289,3 +289,23 @@ def test_case_check_is_wired_into_the_inline_engine():
 
     result = operations.run("case_check", {"case": make_case(), "id": "x"})
     assert result["ok"] is True
+
+
+def test_bridged_receipts_answer_at_data_like_every_other_lane():
+    # The single biggest agent friction in trials: guessing value_paths.
+    # normalize() lifts the provider envelope's answer to data so
+    # result.data.<field> works on every tool.
+    import bridge
+
+    envelope_reply = {
+        "ok": True,
+        "payload_json": json.dumps({"answer": {"quote": {"bid": 3.9, "ask": 4.0}}}),
+    }
+    normalized = bridge.normalize(dict(envelope_reply))
+    assert normalized["data"]["quote"]["bid"] == 3.9
+    assert normalized["payload_json"] == envelope_reply["payload_json"]
+    # Inline receipts and malformed envelopes pass through untouched.
+    inline = {"ok": True, "data": {"close": 217.5}}
+    assert bridge.normalize(dict(inline)) == inline
+    assert bridge.normalize({"ok": False, "payload_json": "not json"}) == {
+        "ok": False, "payload_json": "not json"}

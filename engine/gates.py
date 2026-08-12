@@ -338,14 +338,11 @@ def fill_check(arguments, fetch_quote=None, now=None):
         f"{contract}: {action} {quantity} @ ${price:g} is supported by the "
         f"live market {bid:g} × {ask:g} — awaiting the member's confirmation",
         {
+            # One canonical fill block — no top-level price/bid/ask
+            # duplicates to transcribe from the wrong place.
             "verdict": "fill-supported",
             "contract": contract,
             "action": action,
-            "price": price,
-            "quantity": quantity,
-            "bid": bid,
-            "ask": ask,
-            "observed_at": observed_at,
             "fill": {
                 "price": price, "bid": bid, "ask": ask,
                 "quantity": quantity, "observed_at": observed_at,

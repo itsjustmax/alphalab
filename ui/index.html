@@ -91,6 +91,10 @@
           border-radius: 8px; padding: .3rem .6rem; font-size: .85rem;
           font-family: ui-monospace, monospace; }
   .tick .up { color: #4fb98a; } .tick .down { color: #d96a6a; }
+  .tick.broken { border-color: #d96a6a; color: #d96a6a; }
+  pre.data-body { font-size: .72rem; max-height: 14rem; overflow: auto;
+                  white-space: pre-wrap; word-break: break-word;
+                  margin: .3rem 0 0; opacity: .85; }
   .finding { font-size: .88rem; margin: .35rem 0; }
   details.workings { border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
                      border-radius: 10px; padding: .6rem .8rem; }
@@ -302,16 +306,24 @@ function renderWatchlist(view) {
   const section = el("section", {class: "full"});
   section.append(el("h2", {}, "Watchlist"));
   const strip = el("div", {class: "strip"});
-  for (const [key, quote] of quoted) {
+  for (const [key, entry] of quoted) {
     const symbol = key.slice(7).toUpperCase();
+    // Agents park the receipt at the top level or under a nested field
+    // ("into": "quote") — read both shapes.
+    const quote = (typeof entry === "object" && (entry.quote || entry.value)) || entry;
     const body = typeof quote === "object"
-      ? `${quote.last ?? quote.mark ?? ""}` +
+      ? `${quote.last ?? quote.mark ?? quote.close ?? ""}` +
         (quote.bid != null && quote.ask != null ? ` ${quote.bid}×${quote.ask}` : "")
       : String(quote);
     const chip = el("div", {class: "tick"});
-    chip.append(el("b", {}, symbol + " "), document.createTextNode(body.trim()));
-    const clock = quote?.as_of || quote?.observed_at;
+    chip.append(el("b", {}, symbol + " "),
+      document.createTextNode(body.trim() || "awaiting first receipt"));
+    const clock = quote?.observed_at || quote?.as_of || entry?.as_of;
     if (clock) chip.title = `receipted quote · as of ${clock}`;
+    if (entry?.refresh_error) {
+      chip.classList.add("broken");
+      chip.title = `refresh failed: ${entry.refresh_error}`;
+    }
     strip.append(chip);
   }
   for (const symbol of symbols) {
@@ -457,6 +469,39 @@ async function answerAsk(answerKey, value) {
   refresh();
 }
 
+// The desk records a confirmed fill itself, at the moment of the click,
+// from the exact receipt the member saw — the agent narrates afterward
+// but never transcribes a fill. The answer carries the receipt clock it
+// answered, so a confirmation is bound to one specific market.
+async function answerFill(cardKey, check, option) {
+  const cardId = cardKey.slice(8);            // widgets/…
+  const answerKey = "answers/" + cardId;
+  const suffix = cardId.slice(5);             // fill-…
+  const isExit = suffix.endsWith("-exit");
+  const caseId = isExit ? suffix.slice(0, -5) : suffix;
+  const answer = {choice: option,
+                  receipt_observed_at: check?.fill?.observed_at ?? null};
+  try {
+    if (option === "Confirm fill" && check?.verdict === "fill-supported") {
+      const existing = lastView?.context?.[`cases/${caseId}`];
+      if (!existing) {
+        alert(`No case at cases/${caseId} — a fill needs its case first.`);
+        return;
+      }
+      const fill = {...check.fill, confirmed: answerKey};
+      const recorded = isExit
+        ? {...existing, exit: fill, state: "closed"}
+        : {...existing, fill, state: "open-simulated"};
+      recorded.as_of = new Date().toISOString().slice(0, 19) + "+00:00";
+      await api("POST", `/environments/${envId}/context`,
+        {key: `cases/${caseId}`, value: recorded});
+    }
+    await api("POST", `/environments/${envId}/context`,
+      {key: cardKey, value: null});           // retire the card
+    await answerAsk(answerKey, answer);
+  } catch (error) { alert(error.message); }
+}
+
 let building = false;
 function renderIntake(view) {
   const questions = view.harness.questions || [];
@@ -560,7 +605,15 @@ function renderWidgets(view) {
       }
       card.append(table);
     } else if (spec.kind === "text") {
-      card.append(el("p", {}, spec.body || ""));
+      // A refresh program may park an object in body; show it honestly
+      // as formatted data rather than "[object Object]".
+      if (spec.body !== null && typeof spec.body === "object") {
+        const pre = el("pre", {class: "data-body"},
+          JSON.stringify(spec.body, null, 1).slice(0, 2000));
+        card.append(pre);
+      } else {
+        card.append(el("p", {}, spec.body || ""));
+      }
     } else if (spec.kind === "ask") {
       card.style.borderColor = "color-mix(in srgb, CanvasText 45%, transparent)";
       // A fill confirmation (widgets/fill-*) is program-backed: its question
@@ -587,7 +640,9 @@ function renderWidgets(view) {
         const row = el("div", {style: "display:flex;gap:.4rem;flex-wrap:wrap"});
         for (const option of options) {
           const pick = el("button", {}, String(option));
-          pick.addEventListener("click", () => answerAsk(answerKey, option));
+          pick.addEventListener("click", () => isFill
+            ? answerFill(key, check, option)
+            : answerAsk(answerKey, option));
           row.append(pick);
         }
         card.append(row);
@@ -676,10 +731,19 @@ function answerProblems(spec, context) {
   const problems = [];
   for (const [label, f] of [["fill", spec?.fill], ["exit", spec?.exit]]) {
     if (!f || !f.confirmed) continue;
-    if (!(f.confirmed in context))
+    if (!(f.confirmed in context)) {
       problems.push(`UNCONFIRMED — ${f.confirmed} not found on this desk`);
-    else if (String(context[f.confirmed]) !== "Confirm fill")
+      continue;
+    }
+    const answer = context[f.confirmed];
+    const choice = answer && typeof answer === "object" ? answer.choice : answer;
+    if (String(choice) !== "Confirm fill")
       problems.push(`the answer at ${f.confirmed} does not read "Confirm fill"`);
+    else if (answer && typeof answer === "object" &&
+             answer.receipt_observed_at &&
+             answer.receipt_observed_at !== f.observed_at)
+      problems.push(`the ${label}'s clock does not match the receipt the ` +
+        `member confirmed (${answer.receipt_observed_at})`);
   }
   return problems;
 }

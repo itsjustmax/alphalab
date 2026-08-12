@@ -42,8 +42,9 @@ Cards are context entries under `widgets/`. Kinds this desk's UI renders:
 Shared fields: "pinned":true first; "size" compact|standard|wide|full;
 "as_of" ISO clock on every data card you fill yourself. Explicit
 refresh programs remain for full-engine data: "refresh" with a
-value_path into the receipt — inline tools `result.data.<field>`,
-full-engine tools `result.payload_json.answer.<field>`.
+value_path into the receipt — every tool answers at
+`result.data.<field>` (bridged tools also keep the raw provider
+envelope at `result.payload_json` if you need more than the answer).
 
 Fill confirmations are program-backed ask cards with a fixed contract:
 the card lives at `widgets/fill-<case-id>` and carries a `refresh`
@@ -52,10 +53,14 @@ program running `fill_check` (`value_path` `result.data`, `into`
 ["Confirm fill", "Stand down"] buttons from `check.ask_card` **only**
 while `check.verdict` is `fill-supported`; a refused or absent receipt
 renders its reasons and no controls — a hand-composed fill card can
-never collect an answer here. The member's answer lands at
-`answers/fill-<case-id>`. After acting on the answer, remove the card;
-the answer key stays, because a recorded fill's `confirmed` field
-points at it.
+never collect an answer here. On the member's click this client records
+the outcome itself: it writes the answer at `answers/fill-<case-id>` as
+`{"choice", "receipt_observed_at"}` (binding the answer to the exact
+receipt shown), on "Confirm fill" copies `check.fill` into the case
+with `confirmed` set to the answer key and advances the state
+(`-exit` cards write `exit` and close), and retires the card with a
+null write. The answer key persists — a recorded fill's `confirmed`
+field points at it, and the audit checks the clocks match.
 
 `desk/next_check`, `desk/focus`, and `desk/autopilot` are the unassisted
 loop's keys: the agent schedules itself with the first two; the
@@ -67,5 +72,6 @@ market, clock, and confirmation. Gate verdicts come from `case_check`
 receipts — a case that breaks the contract renders its violations in
 red, and the autopilot writes the same audit to `desk/audit`.
 
-House rules: one pinned `widgets/brief` Today card; 6-10 cards; clocks
-on data; failures named in titles; the member's answers visible.
+House rules: one pinned `widgets/brief` Today card; curate toward ~12
+widget cards and ~25 entries overall; clocks on data; failures named in
+titles; the member's answers visible.

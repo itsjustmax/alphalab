@@ -1,13 +1,13 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
-    "quotes/": "one key per symbol: the latest receipted quote; the desk renders these as chips in the watchlist strip",
+    "quotes/": "one key per symbol, canonical: {\"refresh\": {\"tool\": \"quote_snapshot\", \"args\": {\"symbol\": \"NVDA\", \"max_age_seconds\": 60}, \"minutes\": 5, \"value_path\": \"result.data.quote\", \"into\": \"quote\"}} — the desk renders entry.quote {bid, ask, last, observed_at} as a live chip",
     "findings/": "one key per finding: {title, source, as_of} — evidence worth keeping; the desk renders the findings feed from these",
-    "cases/": "one key per trade case: {contract, thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill is null until the gates pass: fill_check ok (live receipted regular-session bid/ask supporting the price) AND the member's ask-card confirmation; then it is the receipt's exact {price, bid, ask, quantity, observed_at, confirmed: 'answers/fill-<id>'} block. exit: same shape, closed cases only. Run case_check before writing.",
+    "cases/": "one key per trade case: {contract, thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill stays null until the gates pass — the desk records a confirmed fill itself from the fill-card receipt (shape {price, bid, ask, quantity, observed_at, confirmed: 'answers/fill-<id>'}); agents never write fill blocks, and carry existing ones through unchanged when revising. exit: same shape, closed cases only. The audit (desk/audit) verdicts every case after each change.",
     "answers/": "the member's replies to ask cards, one key per card id; a fill's confirmed field names its answer key here",
     "desk/next_check": "the agent's own next check-in clock (ISO-8601 UTC, >=10 minutes out); the autopilot honors it",
     "desk/focus": "one line: what the next check-in should look at",
@@ -19,7 +19,7 @@
   "tools": [
     {
       "name": "capabilities",
-      "description": "Which lanes are live on this machine: inline public data always; the full engine (broker, options, gamma) when installed.",
+      "description": "Which lanes are live on this machine: inline public data always; the full engine (broker, options, gamma) when installed. data: {lanes, full_engine}.",
       "args": {},
       "command": [
         "python3",
@@ -29,7 +29,7 @@
     },
     {
       "name": "price_summary",
-      "description": "End-of-day price summary from public data \u2014 no keys, no accounts. Close, 1d/1m change, 30d range.",
+      "description": "End-of-day price summary from public data — no keys, no accounts. Close, 1d/1m change, 30d range. data: {close, close_label, date, change_1d_pct, change_1m_pct, range_30d}.",
       "args": {
         "symbol": "ticker or index, e.g. NVDA, SPX"
       },
@@ -41,7 +41,7 @@
     },
     {
       "name": "daily_bars",
-      "description": "Daily closes from public data for charting \u2014 points ready for a line card.",
+      "description": "Daily closes from public data for charting — points ready for a line card. data: {points [[date, close]…], candles [[date, o, h, l, c]…], last}.",
       "args": {
         "symbol": "ticker or index",
         "days": "how many trading days (default 60)"
@@ -54,7 +54,7 @@
     },
     {
       "name": "case_check",
-      "description": "Validate one cases/<id> value against the case contract: thesis, evidence keys, invalidation always written, honest state, and the fill gates. Answers every violation by name.",
+      "description": "Validate one cases/<id> value against the case contract: thesis, evidence keys, invalidation always written, honest state, and the fill gates. Answers every violation by name. data: {violations}.",
       "args": {
         "case": "the cases/<id> value to check",
         "id": "the case id, for the summary"
@@ -67,7 +67,7 @@
     },
     {
       "name": "fill_check",
-      "description": "The simulated-fill gate. Fetches its own live receipted quote, verifies regular session, freshness, and that the price sits inside bid/ask, then answers with the exact confirmation ask card and fill block. No live receipt, no confirmation offered.",
+      "description": "The simulated-fill gate. Fetches its own live receipted quote, verifies regular session, freshness, and that the price sits inside bid/ask, then answers with the exact confirmation ask card and fill block. No live receipt, no confirmation offered. data: {verdict: 'fill-supported', contract, action, fill, ask_card} on support; {verdict: 'refused', reasons} otherwise.",
       "args": {
         "symbol": "ticker, e.g. NVDA",
         "sec_type": "STK (default), OPT, FUT, IND",
@@ -87,7 +87,7 @@
     },
     {
       "name": "system_health",
-      "description": "Check the data engine: TWS, Timescale, integrations.",
+      "description": "Check the data engine: TWS, Timescale, integrations. data: component statuses.",
       "args": {},
       "command": [
         "python3",
@@ -97,7 +97,7 @@
     },
     {
       "name": "quote_snapshot",
-      "description": "One receipted IBKR quote: bid/ask/last/mark with source clocks.",
+      "description": "One receipted IBKR quote: bid/ask/last/mark with source clocks. data: {quote: {bid, ask, last, mid, observed_at}, freshness}.",
       "args": {
         "symbol": "ticker, e.g. NVDA",
         "sec_type": "STK (default), OPT, FUT, IND, CASH",
@@ -114,7 +114,7 @@
     },
     {
       "name": "options_chain",
-      "description": "A bounded options chain snapshot for one underlying.",
+      "description": "A bounded options chain snapshot for one underlying. data: the chain answer (expirations, strikes, rows).",
       "args": {
         "symbol": "underlying ticker",
         "expiration_limit": "how many expirations",
@@ -129,7 +129,7 @@
     },
     {
       "name": "spx_gamma",
-      "description": "Latest SPX dealer gamma, strike-level, cached-honest on vendor failure.",
+      "description": "Latest SPX dealer gamma, strike-level, cached-honest on vendor failure. data: {gamma_v2: {gamma_centroid, regime_v2, total_net_gamma, local_net_gamma_25/_50, spot_vs_centroid}, expiration_pocket_count, collected_at}.",
       "args": {
         "limit_strikes": "strikes to include",
         "max_age_minutes": "serve cached if fresher",
@@ -143,7 +143,7 @@
     },
     {
       "name": "market_context",
-      "description": "The desk's market context brief (cached-honest).",
+      "description": "The desk's market context brief (cached-honest). data: the context brief object (fields vary by focus).",
       "args": {
         "focus": "optional focus area",
         "allow_stale": "true to accept cache",
@@ -157,7 +157,7 @@
     },
     {
       "name": "short_volume",
-      "description": "FINRA short volume for tickers.",
+      "description": "FINRA short volume for tickers. data: rows per ticker per day.",
       "args": {
         "tickers": "list of tickers",
         "days": "lookback days"
@@ -170,7 +170,7 @@
     },
     {
       "name": "implied_move",
-      "description": "Options-implied move into a dated event.",
+      "description": "Options-implied move into a dated event. data: the implied-move answer for the event.",
       "args": {
         "event_date": "YYYY-MM-DD",
         "ticker": "underlying",
@@ -184,7 +184,7 @@
     },
     {
       "name": "symbol_research",
-      "description": "The full research pass on one symbol: bars, zones, options.",
+      "description": "The full research pass on one symbol: bars, zones, options. data: the research answer (bars, zones, options blocks).",
       "args": {
         "symbol": "ticker",
         "depth": "research depth",

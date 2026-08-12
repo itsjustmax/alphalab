@@ -68,6 +68,27 @@ def invoke(operation, arguments, timeout=110):
     if result.returncode != 0:
         return {"ok": False, "error": result.stderr.strip()[:1500]}
     try:
-        return json.loads(result.stdout)
+        return normalize(json.loads(result.stdout))
     except json.JSONDecodeError:
         return {"ok": False, "error": "the provider answered with non-JSON"}
+
+
+def normalize(reply):
+    """One receipt shape for every lane.
+
+    The bridged provider answers an envelope whose answer hides inside a
+    payload_json string; inline tools answer {data: ...} directly. Lift
+    the envelope's answer to `data` so `result.data.<field>` works on
+    every tool — value_path guessing was the single biggest agent
+    friction in trials. The raw envelope stays intact beside it.
+    """
+
+    if isinstance(reply, dict) and "data" not in reply:
+        try:
+            payload = json.loads(reply.get("payload_json") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        answer = payload.get("answer") if isinstance(payload, dict) else None
+        if isinstance(answer, dict):
+            reply["data"] = answer
+    return reply
