@@ -115,8 +115,9 @@ def stream_matches_order(contract_key, args):
     tokens = str(contract_key or "").split(":")
     if len(tokens) < 3:
         return False
-    sec_type = str(args.get("sec_type") or "STK").upper()
     symbol = str(args.get("symbol") or "").upper()
+    default_type = "IND" if symbol in gates.INDEX_SYMBOLS else "STK"
+    sec_type = str(args.get("sec_type") or default_type).upper()
     if tokens[1] != sec_type or tokens[2] != symbol:
         return False
     if sec_type != "OPT":
@@ -355,11 +356,18 @@ class Pilot:
         A fill releases its stream on recording; this catches the other
         exit — an order cancelled by writing null on its card — so no
         subscription (or its client-id lease) outlives its purpose.
+        Watchlist symbols hold their streams: the chips read them live.
         """
 
         armed = [((card.get("refresh") or {}).get("args") or {})
                  for key, card in (context or {}).items()
                  if is_order_card(key, card)]
+        # The watchlist holds its streams too — chips read them live.
+        watchlist = (context or {}).get("watchlist")
+        if isinstance(watchlist, str):
+            watchlist = watchlist.replace(",", " ").split()
+        for symbol in (watchlist or []):
+            armed.append({"symbol": str(symbol).strip().upper()})
         try:
             reply = self._api(
                 "POST", f"/environments/{self.environment}/tools/market_stream",

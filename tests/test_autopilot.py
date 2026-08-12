@@ -323,3 +323,32 @@ def test_a_member_turn_holds_the_autopilot_off():
     context["desk/member_turn"] = "2026-08-12T16:00:00+00:00"
     action, reason = autopilot.decide(context, fresh, RTH)
     assert action == "build" and "maintenance" in reason
+
+
+def test_watchlist_streams_are_held_not_swept(tmp_path):
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    stops = []
+    active = [
+        {"stream_id": "s-nvda", "owner": "alphalab-desk",
+         "contract_key": "IBKR:STK:NVDA:SMART:USD"},
+        {"stream_id": "s-spx", "owner": "alphalab-desk",
+         "contract_key": "IBKR:IND:SPX:CBOE:USD"},
+        {"stream_id": "s-orphan", "owner": "alphalab-desk",
+         "contract_key": "IBKR:STK:TSLA:SMART:USD"},
+    ]
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/tools/market_stream"):
+            if body["args"]["action"] == "list_active":
+                return {"ok": True, "result": {"ok": True,
+                                               "data": {"rows": active}}}
+            stops.append(body["args"]["stream_id"])
+            return {"ok": True, "result": {"ok": True, "data": {}}}
+        return {"ok": True}
+
+    pilot._api = fake_api
+    context = {"watchlist": ["NVDA", "SPX"]}
+    stopped = pilot.sweep_streams(context)
+    assert stopped == 1
+    assert stops == ["s-orphan"]  # SPX (index) and NVDA both held

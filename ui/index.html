@@ -644,7 +644,8 @@ function renderWatchlist(view) {
   for (const symbol of symbols) {
     const chip = el("div", {class: "tick", "data-symbol": symbol},
                     `${symbol} …`);
-    chip.append(chipFocus(`watchlist/${symbol}`, chip, symbol));
+    chip._fold = chipFocus(`watchlist/${symbol}`, chip, symbol);
+    chip.append(chip._fold);
     strip.append(chip);
     fillTick(chip, symbol);
   }
@@ -682,6 +683,7 @@ async function fillTick(chip, symbol) {
     document.createTextNode(`${d.close_label} `),
     el("span", {class: d.change_1d_pct >= 0 ? "up" : "down"},
       `${d.change_1d_pct >= 0 ? "+" : ""}${d.change_1d_pct}%`));
+  if (chip._fold) chip.append(chip._fold);
   chip.title = `EOD close (stream unavailable) · ${eod.summary}`;
 }
 function applyTick(chip, quote) {
@@ -693,6 +695,7 @@ function applyTick(chip, quote) {
     document.createTextNode(`${quote.last} `),
     el("span", {class: (pct ?? 0) >= 0 ? "up" : "down"},
       pct === null ? "" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% vs close`));
+  if (chip._fold) chip.append(chip._fold);
   chip.title = `streaming ${quote.bid} × ${quote.ask} · as of ` +
     `${quote.observed_at}`;
   return true;
