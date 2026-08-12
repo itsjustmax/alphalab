@@ -195,6 +195,14 @@ def case_check(arguments):
     )
 
 
+def _refused(summary, reasons):
+    """A fill_check refusal: the verdict travels in data so a program-backed
+    card (refresh value_path result.data) always carries why it refused."""
+
+    return receipt(summary, {"verdict": "refused", "reasons": reasons},
+                   gaps=reasons, ok=False)
+
+
 def _quote_from_receipt(raw):
     """Pull {bid, ask, observed_at} out of an engine quote receipt.
 
@@ -243,23 +251,22 @@ def fill_check(arguments, fetch_quote=None, now=None):
     now = now or _now()
     symbol = str(arguments.get("symbol") or "").strip().upper()
     if not symbol:
-        return receipt("fill_check needs a symbol", ok=False,
-                       gaps=["no symbol given"])
+        return _refused("fill_check needs a symbol", ["no symbol given"])
     action = str(arguments.get("action") or "buy").strip().lower()
     if action not in ("buy", "sell"):
-        return receipt("a simulated fill is a buy or a sell", ok=False,
-                       gaps=[f"action {action!r} is neither"])
+        return _refused("a simulated fill is a buy or a sell",
+                        [f"action {action!r} is neither"])
     price = _number(arguments.get("price"))
     if price is None or price < 0:
-        return receipt("fill_check needs a finite non-negative price", ok=False,
-                       gaps=["no usable price given"])
+        return _refused("fill_check needs a finite non-negative price",
+                        ["no usable price given"])
     try:
         quantity = int(arguments.get("quantity") or 0)
     except (TypeError, ValueError):
         quantity = 0
     if not 1 <= quantity <= 100:
-        return receipt("a simulated fill is 1 through 100 whole contracts",
-                       ok=False, gaps=[f"quantity {arguments.get('quantity')!r}"])
+        return _refused("a simulated fill is 1 through 100 whole contracts",
+                        [f"quantity {arguments.get('quantity')!r}"])
     contract = str(arguments.get("contract") or "").strip() or " ".join(
         str(arguments.get(field) or "").strip()
         for field in ("symbol", "expiration", "strike", "right")
@@ -269,14 +276,11 @@ def fill_check(arguments, fetch_quote=None, now=None):
         import bridge
 
         if not bridge.available():
-            return receipt(
+            return _refused(
                 "no live quote lane on this machine — a simulated fill "
                 "cannot be verified here",
-                ok=False,
-                gaps=[
-                    "the full engine (broker quotes) is not installed; "
-                    "no receipt, no confirmation may be offered"
-                ],
+                ["the full engine (broker quotes) is not installed; "
+                 "no receipt, no confirmation may be offered"],
             )
 
         def fetch_quote(request):
@@ -288,8 +292,7 @@ def fill_check(arguments, fetch_quote=None, now=None):
             request[field] = arguments[field]
     quote, gaps = _quote_from_receipt(fetch_quote(request))
     if quote is None:
-        return receipt(f"{contract}: no live receipted quote — no fill",
-                       ok=False, gaps=gaps)
+        return _refused(f"{contract}: no live receipted quote — no fill", gaps)
 
     bid, ask = _number(quote.get("bid")), _number(quote.get("ask"))
     observed_at = str(
@@ -297,42 +300,37 @@ def fill_check(arguments, fetch_quote=None, now=None):
     ).strip()
     clock = parse_clock(observed_at)
     if bid is None or ask is None or ask <= 0 or ask < bid or bid < 0:
-        return receipt(
+        return _refused(
             f"{contract}: the receipt carries no live two-sided market",
-            ok=False,
-            gaps=[f"bid/ask in the receipt: {quote.get('bid')!r} × "
-                  f"{quote.get('ask')!r} — no market, no fill"],
+            [f"bid/ask in the receipt: {quote.get('bid')!r} × "
+             f"{quote.get('ask')!r} — no market, no fill"],
         )
     if clock is None:
-        return receipt(
+        return _refused(
             f"{contract}: the quote receipt carries no usable clock",
-            ok=False,
-            gaps=["a fill needs the quote's exact timezone-bearing "
-                  "observed_at; none was receipted"],
+            ["a fill needs the quote's exact timezone-bearing "
+             "observed_at; none was receipted"],
         )
     age = (now - clock).total_seconds()
     if abs(age) > QUOTE_MAX_AGE_SECONDS:
-        return receipt(
+        return _refused(
             f"{contract}: the receipted quote is not live",
-            ok=False,
-            gaps=[f"quote clock {observed_at} is {abs(age):.0f}s "
-                  f"{'ahead' if age < 0 else 'old'} — a fill needs a market "
-                  f"no older than {QUOTE_MAX_AGE_SECONDS}s"],
+            [f"quote clock {observed_at} is {abs(age):.0f}s "
+             f"{'ahead' if age < 0 else 'old'} — a fill needs a market "
+             f"no older than {QUOTE_MAX_AGE_SECONDS}s"],
         )
     if not in_regular_session(clock):
-        return receipt(
+        return _refused(
             f"{contract}: the quote is outside the regular session",
-            ok=False,
-            gaps=[f"quote clock {observed_at} falls outside 9:30–16:00 ET "
-                  "Mon–Fri; regular-session markets only"],
+            [f"quote clock {observed_at} falls outside 9:30–16:00 ET "
+             "Mon–Fri; regular-session markets only"],
         )
     if not bid <= price <= ask:
-        return receipt(
+        return _refused(
             f"{contract}: fill ${price:g} sits outside the live market "
             f"{bid:g} × {ask:g}",
-            ok=False,
-            gaps=[f"the live receipted market is {bid:g} × {ask:g} as of "
-                  f"{observed_at}; ${price:g} is not in it"],
+            [f"the live receipted market is {bid:g} × {ask:g} as of "
+             f"{observed_at}; ${price:g} is not in it"],
         )
 
     clock_text = clock.astimezone(ET).strftime("%H:%M:%S ET · %Y-%m-%d")

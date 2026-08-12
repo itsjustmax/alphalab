@@ -133,12 +133,14 @@ function el(tag, attrs = {}, text = "") {
 
 let you = "";
 let lastRendered = "";
+let lastView = null;
 function render(view) {
   // Re-render only on real change: a quiet 5s poll must not wipe
   // hover state or half-built interactions.
   const fingerprint = JSON.stringify(view);
   if (fingerprint === lastRendered) return;
   lastRendered = fingerprint;
+  lastView = view;
   you = view.you;
   document.getElementById("title").textContent = view.harness.name;
   document.getElementById("version").textContent = view.harness.version;
@@ -272,20 +274,35 @@ function renderWidgets(view) {
       card.append(el("p", {}, spec.body || ""));
     } else if (spec.kind === "ask") {
       card.style.borderColor = "color-mix(in srgb, CanvasText 45%, transparent)";
-      card.append(el("p", {}, spec.question || ""));
+      // A fill confirmation (widgets/fill-*) is program-backed: its question
+      // and options come from the fill_check receipt the card's own refresh
+      // wrote into spec.check. No supported receipt, no answer controls —
+      // a hand-composed fill card can never collect a confirmation here.
+      const isFill = key.startsWith("widgets/fill-");
+      const check = isFill ? spec.check : null;
+      const supported = !!(check && check.verdict === "fill-supported" && check.ask_card);
+      const question = isFill && supported
+        ? check.ask_card.question : (spec.question || "");
+      const options = isFill && supported ? check.ask_card.options : spec.options;
+      card.append(el("p", {}, question));
       const answerKey = "answers/" + key.slice(8);
       const already = view.context[answerKey];
       if (already !== undefined) {
         card.append(el("p", {class: "muted"}, `you answered: ${JSON.stringify(already)}`));
-      } else if (Array.isArray(spec.options) && spec.options.length) {
+      } else if (isFill && !supported) {
+        card.append(el("p", {class: "violation"},
+          "⚠ no live receipted market — no confirmation offered"));
+        for (const reason of check?.reasons || [])
+          card.append(el("p", {class: "violation"}, String(reason)));
+      } else if (Array.isArray(options) && options.length) {
         const row = el("div", {style: "display:flex;gap:.4rem;flex-wrap:wrap"});
-        for (const option of spec.options) {
+        for (const option of options) {
           const pick = el("button", {}, String(option));
           pick.addEventListener("click", () => answerAsk(answerKey, option));
           row.append(pick);
         }
         card.append(row);
-      } else {
+      } else if (!isFill) {
         const form = el("form");
         const input = el("input", {type: "text", placeholder: "your answer…"});
         form.append(input, el("button", {}, "Answer"));
@@ -305,38 +322,46 @@ function renderWidgets(view) {
     } else {
       card.append(el("p", {class: "muted"}, `[${spec.kind}] not rendered yet`));
     }
+    if (spec.refresh_error)
+      card.append(el("p", {class: "violation"}, `⚠ refresh failed: ${spec.refresh_error}`));
+    if (spec.as_of) card.append(el("div", {class: "as-of"}, `as of ${spec.as_of}`));
     deck.append(card);
   }
   section.append(deck);
   return section;
 }
 
-function caseProblems(spec, context) {
-  // The UI's mirror of the engine's paper gates (engine/gates.py) —
-  // a case that breaks the contract renders its violations, never hides them.
-  if (!spec || typeof spec !== "object") return ["not a case object"];
+// One rulebook: the engine's case_check is the only implementation of the
+// case contract. The client caches verdicts per exact case value and renders
+// them; it adds only the checks the engine cannot see from a tool call —
+// whether the referenced answer entry actually exists on this desk.
+const caseVerdicts = new Map();
+const caseChecksPending = new Set();
+function engineViolations(key, spec) {
+  const fingerprint = key + "|" + JSON.stringify(spec);
+  if (caseVerdicts.has(fingerprint)) return caseVerdicts.get(fingerprint);
+  if (!caseChecksPending.has(fingerprint)) {
+    caseChecksPending.add(fingerprint);
+    api("POST", `/environments/${envId}/tools/case_check`,
+        {args: {case: spec, id: key.slice(6)}})
+      .then(reply => caseVerdicts.set(fingerprint,
+        reply.result?.data?.violations ?? reply.result?.gaps ?? []))
+      .catch(error => caseVerdicts.set(fingerprint,
+        [`case_check did not answer: ${error.message}`]))
+      .finally(() => {
+        caseChecksPending.delete(fingerprint);
+        lastRendered = "";
+        if (lastView) render(lastView);
+      });
+  }
+  return null; // verdict pending
+}
+
+function answerProblems(spec, context) {
   const problems = [];
-  for (const field of ["contract", "thesis", "invalidation"])
-    if (!String(spec[field] ?? "").trim()) problems.push(`missing ${field}`);
-  const states = ["idea", "watching", "open-simulated", "closed"];
-  if (!states.includes(spec.state))
-    problems.push(`state "${spec.state}" is not one of ${states.join(" | ")}`);
-  if (["open-simulated", "closed"].includes(spec.state) && !spec.fill)
-    problems.push(`GATE BROKEN — no receipted fill behind an ${spec.state} state`);
-  if (["idea", "watching"].includes(spec.state) && spec.fill)
-    problems.push("GATE BROKEN — a fill recorded before open-simulated");
-  if (spec.exit && spec.state !== "closed")
-    problems.push("an exit belongs only on a closed case");
-  for (const [label, f] of [["fill", spec.fill], ["exit", spec.exit]]) {
-    if (!f) continue;
-    const price = Number(f.price), bid = Number(f.bid), ask = Number(f.ask);
-    if (!(bid <= price && price <= ask))
-      problems.push(`GATE BROKEN — ${label} $${price} sits outside its receipted market ${bid} × ${ask}`);
-    if (!(Number(f.quantity) >= 1 && Number(f.quantity) <= 100))
-      problems.push(`${label} quantity out of range`);
-    if (!f.observed_at) problems.push(`${label} carries no quote clock`);
-    if (!f.confirmed) problems.push(`UNCONFIRMED — no member confirmation on the ${label}`);
-    else if (!(f.confirmed in context))
+  for (const [label, f] of [["fill", spec?.fill], ["exit", spec?.exit]]) {
+    if (!f || !f.confirmed) continue;
+    if (!(f.confirmed in context))
       problems.push(`UNCONFIRMED — ${f.confirmed} not found on this desk`);
     else if (String(context[f.confirmed]) !== "Confirm fill")
       problems.push(`the answer at ${f.confirmed} does not read "Confirm fill"`);
@@ -373,8 +398,13 @@ function renderCases(view) {
     if (Array.isArray(spec?.evidence) && spec.evidence.length)
       card.append(el("p", {class: "muted"}, `evidence: ${spec.evidence.join(" · ")}`));
     if (spec?.as_of) card.append(el("div", {class: "as-of"}, `as of ${spec.as_of}`));
-    for (const problem of caseProblems(spec, view.context))
-      card.append(el("p", {class: "violation"}, `⚠ ${problem}`));
+    const engine = engineViolations(key, spec);
+    if (engine === null) {
+      card.append(el("p", {class: "muted"}, "checking the case contract…"));
+    } else {
+      for (const problem of [...engine, ...answerProblems(spec, view.context)])
+        card.append(el("p", {class: "violation"}, `⚠ ${problem}`));
+    }
     grid.append(card);
   }
   section.append(grid);

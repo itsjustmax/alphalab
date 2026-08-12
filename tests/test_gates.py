@@ -221,6 +221,20 @@ def test_fill_check_rejects_605_against_the_live_market():
     assert any("3.9 × 4" in gap for gap in result["gaps"])
 
 
+def test_refusals_carry_their_verdict_in_data():
+    # A program-backed confirmation card extracts result.data — the refusal
+    # and its reasons must travel there, or the card would go silently stale.
+    refusals = [
+        check_fill({**FILL_ARGS, "price": 6.05}, envelope(live_quote())),
+        check_fill(FILL_ARGS, envelope(live_quote(observed_at="2026-08-12T14:10:00-04:00"))),
+        check_fill(FILL_ARGS, {"ok": False, "error": "TWS is not running"}),
+        gates.fill_check({}, now=NOW),
+    ]
+    for result in refusals:
+        assert result["data"]["verdict"] == "refused"
+        assert result["data"]["reasons"] == result["gaps"]
+
+
 def test_fill_check_rejects_a_stale_quote():
     stale = live_quote(observed_at="2026-08-12T14:10:00-04:00")  # ~22m old
     result = check_fill(FILL_ARGS, envelope(stale))
