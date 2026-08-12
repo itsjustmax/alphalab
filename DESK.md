@@ -46,21 +46,18 @@ value_path into the receipt — every tool answers at
 `result.data.<field>` (bridged tools also keep the raw provider
 envelope at `result.payload_json` if you need more than the answer).
 
-Fill confirmations are program-backed ask cards with a fixed contract:
-the card lives at `widgets/fill-<case-id>` and carries a `refresh`
-program running `fill_check` (`value_path` `result.data`, `into`
-`check`). This client renders the question and the
-["Confirm fill", "Stand down"] buttons from `check.ask_card` **only**
-while `check.verdict` is `fill-supported`; a refused or absent receipt
-renders its reasons and no controls — a hand-composed fill card can
-never collect an answer here. On the member's click this client records
-the outcome itself: it writes the answer at `answers/fill-<case-id>` as
-`{"choice", "receipt_observed_at"}` (binding the answer to the exact
-receipt shown), on "Confirm fill" copies `check.fill` into the case
-with `confirmed` set to the answer key and advances the state
-(`-exit` cards write `exit` and close), and retires the card with a
-null write. The answer key persists — a recorded fill's `confirmed`
-field points at it, and the audit checks the clocks match.
+Working paper orders are program-backed cards with a fixed contract:
+`widgets/fill-<case-id>` (or `…-exit`), kind "order", carrying a
+`refresh` program running `fill_check` (`value_path` `result.data`,
+`into` `check`). This client renders the order's intent from the
+program args and its live status from `check`: armed (no receipt yet),
+supported (green — the live market contains the price), or refused
+(the reasons, in red). No buttons — paper fills take no member
+confirmation. The autopilot records a fresh supported order
+mechanically: `check.fill` lands in the case verbatim, the state
+advances, the card retires, and the recording is announced in the
+conversation. Asks (kind "ask") are reserved for the member's own
+decisions: direction, risk, what to pursue or drop.
 
 `desk/next_check`, `desk/focus`, and `desk/autopilot` are the unassisted
 loop's keys: the agent schedules itself with the first two; the

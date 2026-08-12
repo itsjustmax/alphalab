@@ -147,3 +147,68 @@ def test_the_audit_runs_once_per_case_change(tmp_path):
     assert len(calls) > first
     audits = [c for c in calls if c == ("POST", "/environments/env/context")]
     assert len(audits) == 2
+
+
+def make_order(check_verdict="fill-supported", observed_at=None, kind="order"):
+    fill = {"price": 4.0, "bid": 3.9, "ask": 4.0, "quantity": 2,
+            "observed_at": observed_at or "2026-08-12T14:30:30-04:00"}
+    return {"kind": kind, "title": "order",
+            "check": {"verdict": check_verdict, "contract": "NVDA 20260814 190C",
+                      "action": "buy", "fill": fill},
+            "refresh": {"tool": "fill_check", "args": {}}}
+
+
+WATCHING_CASE = {"contract": "NVDA 20260814 190C", "thesis": "t",
+                 "evidence": [], "invalidation": "close under 185",
+                 "state": "watching", "fill": None, "exit": None}
+
+
+def test_a_supported_fresh_order_records_the_fill():
+    # RTH: 2026-08-12 14:31 ET; receipt 30s old.
+    context = {"widgets/fill-nvda-190c": make_order(),
+               "cases/nvda-190c": dict(WATCHING_CASE)}
+    recordings = autopilot.supported_orders(context, RTH)
+    assert len(recordings) == 1
+    recording = recordings[0]
+    assert recording["case_key"] == "cases/nvda-190c"
+    assert recording["card_key"] == "widgets/fill-nvda-190c"
+    assert recording["case"]["state"] == "open-simulated"
+    assert recording["case"]["fill"]["price"] == 4.0
+    assert "confirmed" not in recording["case"]["fill"]
+
+
+def test_orders_wait_on_stale_refused_or_missing_gates():
+    fresh_case = {"cases/nvda-190c": dict(WATCHING_CASE)}
+    stale = {"widgets/fill-nvda-190c":
+             make_order(observed_at="2026-08-12T14:10:00-04:00"), **fresh_case}
+    refused = {"widgets/fill-nvda-190c":
+               make_order(check_verdict="refused"), **fresh_case}
+    not_an_order = {"widgets/fill-nvda-190c": make_order(kind="ask"), **fresh_case}
+    caseless = {"widgets/fill-nvda-190c": make_order()}
+    for context in (stale, refused, not_an_order, caseless):
+        assert autopilot.supported_orders(context, RTH) == []
+
+
+def test_an_exit_order_closes_an_open_case():
+    open_case = {**WATCHING_CASE, "state": "open-simulated",
+                 "fill": {"price": 3.5, "bid": 3.4, "ask": 3.5, "quantity": 2,
+                          "observed_at": "2026-08-11T14:00:00-04:00"}}
+    context = {"widgets/fill-nvda-190c-exit": make_order(),
+               "cases/nvda-190c": open_case}
+    recordings = autopilot.supported_orders(context, RTH)
+    assert len(recordings) == 1
+    assert recordings[0]["case"]["state"] == "closed"
+    assert recordings[0]["case"]["exit"]["price"] == 4.0
+    assert recordings[0]["case"]["fill"]["price"] == 3.5  # entry untouched
+    # An exit against a case that is not open records nothing.
+    context["cases/nvda-190c"] = dict(WATCHING_CASE)
+    assert autopilot.supported_orders(context, RTH) == []
+
+
+def test_a_recorded_fill_earns_a_narration_turn():
+    settled = state(last_turn="2026-08-12T18:05:00+00:00",
+                    unnarrated_fills=["cases/nvda-190c"])
+    action, reason = autopilot.decide(ACTIVE_DESK, settled, RTH)
+    assert action == "build"
+    assert "paper fill recorded: cases/nvda-190c" == reason.replace("paper fill recorded: ", "paper fill recorded: ")
+    assert "cases/nvda-190c" in reason

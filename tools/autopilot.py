@@ -36,6 +36,7 @@ import gates  # noqa: E402  (ET, parse_clock — one rulebook for clocks)
 
 MIN_GAP_SECONDS = 10 * 60
 DEFAULT_BUDGET = 36
+RECORD_MAX_AGE_SECONDS = 180
 
 
 def utc_now():
@@ -79,6 +80,65 @@ def roll_date(state, now):
     return state
 
 
+def supported_orders(context, now):
+    """Order cards whose market gate holds right now, ready to record.
+
+    A working paper order is `widgets/fill-<case-id>` (or `…-exit`) with
+    kind "order" and a fresh fill-supported check from its own program.
+    Recording is pure transcription — the receipt's fill block lands in
+    the case verbatim, the state advances, the card retires. Paper fills
+    take no human confirmation; asks are for direction, not data.
+    """
+
+    recordings = []
+    for key, card in sorted((context or {}).items()):
+        if not (key.startswith("widgets/fill-") and isinstance(card, dict)):
+            continue
+        if card.get("kind") != "order":
+            continue
+        check = card.get("check")
+        if not isinstance(check, dict) or check.get("verdict") != "fill-supported":
+            continue
+        fill = check.get("fill")
+        if not isinstance(fill, dict):
+            continue
+        clock = gates.parse_clock(fill.get("observed_at"))
+        if clock is None or not \
+                0 <= (now - clock).total_seconds() <= RECORD_MAX_AGE_SECONDS:
+            continue  # stale receipt — wait for the card's next check
+        suffix = key[len("widgets/fill-"):]
+        is_exit = suffix.endswith("-exit")
+        case_id = suffix[:-5] if is_exit else suffix
+        case = (context or {}).get(f"cases/{case_id}")
+        if not isinstance(case, dict):
+            continue
+        state = case.get("state")
+        if is_exit and state != "open-simulated":
+            continue
+        if not is_exit and state not in ("idea", "watching"):
+            continue
+        recorded = dict(case)
+        if is_exit:
+            recorded["exit"] = fill
+            recorded["state"] = "closed"
+        else:
+            recorded["fill"] = fill
+            recorded["state"] = "open-simulated"
+        recorded["as_of"] = now.isoformat(timespec="seconds")
+        recordings.append({
+            "card_key": key,
+            "case_key": f"cases/{case_id}",
+            "case": recorded,
+            "summary": (
+                f"paper {'exit' if is_exit else 'fill'} recorded — "
+                f"{check.get('action', 'buy')} {fill['quantity']} × "
+                f"{check.get('contract', case_id)} @ ${fill['price']:g} "
+                f"against the live market {fill['bid']:g} × {fill['ask']:g} "
+                f"({fill['observed_at']})"),
+        })
+    return recordings
+
+
 def audit_violations(cases, check):
     """The post-turn audit: run the case gate over every case.
 
@@ -117,6 +177,9 @@ def decide(context, state, now, budget=DEFAULT_BUDGET):
     )
     if new_answers:
         return "build", f"answer landed: {', '.join(new_answers)}"
+    unnarrated = sorted(set(state.get("unnarrated_fills") or []))
+    if unnarrated:
+        return "build", f"paper fill recorded: {', '.join(unnarrated)}"
     next_check = gates.parse_clock((context or {}).get("desk/next_check"))
     if next_check is not None and next_check <= now:
         return "build", "the desk's own next-check clock came due"
@@ -197,6 +260,25 @@ class Pilot:
         })
         return violations
 
+    def record_orders(self, context, now):
+        """Record every order whose market gate holds; announce each one."""
+
+        recordings = supported_orders(context, now)
+        for recording in recordings:
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": recording["case_key"], "value": recording["case"]})
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": recording["card_key"], "value": None})
+            self._api("POST", f"/environments/{self.environment}/say",
+                      {"text": recording["summary"].capitalize() + "."})
+            fills = self.state.setdefault("unnarrated_fills", [])
+            if recording["case_key"] not in fills:
+                fills.append(recording["case_key"])
+            print(f"[{utc_now():%H:%M:%S}] {recording['summary']}", flush=True)
+        if recordings:
+            self._save()
+        return recordings
+
     def tick(self, now=None):
         now = now or utc_now()
         roll_date(self.state, now)
@@ -206,6 +288,7 @@ class Pilot:
         if audited:
             print(f"[{utc_now():%H:%M:%S}] audit: {len(audited)} case(s) "
                   f"broken — {', '.join(sorted(audited))}", flush=True)
+        self.record_orders(context, now)
         action, reason = decide(context, self.state, now, self.budget)
         if action == "build":
             self._api("POST", f"/environments/{self.environment}/build", {})
@@ -213,6 +296,7 @@ class Pilot:
             self.state["builds_today"] = self.state.get("builds_today", 0) + 1
             self.state["seen_answers"] = sorted(
                 k for k in context if k.startswith("answers/"))
+            self.state["unnarrated_fills"] = []
             self._save()
             self._api("POST", f"/environments/{self.environment}/context", {
                 "key": "desk/autopilot",

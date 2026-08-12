@@ -92,6 +92,7 @@
           font-family: ui-monospace, monospace; }
   .tick .up { color: #4fb98a; } .tick .down { color: #d96a6a; }
   .tick.broken { border-color: #d96a6a; color: #d96a6a; }
+  .ok-line { color: #4fb98a; font-size: .85rem; margin: .3rem 0 0; }
   pre.data-body { font-size: .72rem; max-height: 14rem; overflow: auto;
                   white-space: pre-wrap; word-break: break-word;
                   margin: .3rem 0 0; opacity: .85; }
@@ -469,45 +470,9 @@ async function answerAsk(answerKey, value) {
   refresh();
 }
 
-// The desk records a confirmed fill itself, at the moment of the click,
-// from the exact receipt the member saw — the agent narrates afterward
-// but never transcribes a fill. The answer carries the receipt clock it
-// answered, so a confirmation is bound to one specific market.
-async function answerFill(cardKey, check, option) {
-  const cardId = cardKey.slice(8);            // widgets/…
-  const answerKey = "answers/" + cardId;
-  const suffix = cardId.slice(5);             // fill-…
-  const isExit = suffix.endsWith("-exit");
-  const caseId = isExit ? suffix.slice(0, -5) : suffix;
-  const answer = {choice: option,
-                  receipt_observed_at: check?.fill?.observed_at ?? null};
-  try {
-    if (option === "Confirm fill" && check?.verdict === "fill-supported") {
-      const receiptAge = (Date.now() -
-        new Date(check?.fill?.observed_at ?? 0).getTime()) / 1000;
-      if (!(receiptAge < 180)) {
-        alert("This receipt is stale — the card re-checks the market " +
-              "shortly; confirm against a fresh quote.");
-        return;
-      }
-      const existing = lastView?.context?.[`cases/${caseId}`];
-      if (!existing) {
-        alert(`No case at cases/${caseId} — a fill needs its case first.`);
-        return;
-      }
-      const fill = {...check.fill, confirmed: answerKey};
-      const recorded = isExit
-        ? {...existing, exit: fill, state: "closed"}
-        : {...existing, fill, state: "open-simulated"};
-      recorded.as_of = new Date().toISOString().slice(0, 19) + "+00:00";
-      await api("POST", `/environments/${envId}/context`,
-        {key: `cases/${caseId}`, value: recorded});
-    }
-    await api("POST", `/environments/${envId}/context`,
-      {key: cardKey, value: null});           // retire the card
-    await answerAsk(answerKey, answer);
-  } catch (error) { alert(error.message); }
-}
+// Paper fills take no human confirmation: order cards (kind "order")
+// carry their own market gate and the autopilot records supported fills
+// mechanically. Asks stay reserved for direction and risk.
 
 let building = false;
 function renderIntake(view) {
@@ -623,37 +588,20 @@ function renderWidgets(view) {
       }
     } else if (spec.kind === "ask") {
       card.style.borderColor = "color-mix(in srgb, CanvasText 45%, transparent)";
-      // A fill confirmation (widgets/fill-*) is program-backed: its question
-      // and options come from the fill_check receipt the card's own refresh
-      // wrote into spec.check. No supported receipt, no answer controls —
-      // a hand-composed fill card can never collect a confirmation here.
-      const isFill = key.startsWith("widgets/fill-");
-      const check = isFill ? spec.check : null;
-      const supported = !!(check && check.verdict === "fill-supported" && check.ask_card);
-      const question = isFill && supported
-        ? check.ask_card.question : (spec.question || "");
-      const options = isFill && supported ? check.ask_card.options : spec.options;
-      card.append(el("p", {}, question));
+      card.append(el("p", {}, spec.question || ""));
       const answerKey = "answers/" + key.slice(8);
       const already = view.context[answerKey];
       if (already !== undefined) {
         card.append(el("p", {class: "muted"}, `you answered: ${JSON.stringify(already)}`));
-      } else if (isFill && !supported) {
-        card.append(el("p", {class: "violation"},
-          "⚠ no live receipted market — no confirmation offered"));
-        for (const reason of check?.reasons || [])
-          card.append(el("p", {class: "violation"}, String(reason)));
-      } else if (Array.isArray(options) && options.length) {
+      } else if (Array.isArray(spec.options) && spec.options.length) {
         const row = el("div", {style: "display:flex;gap:.4rem;flex-wrap:wrap"});
-        for (const option of options) {
+        for (const option of spec.options) {
           const pick = el("button", {}, String(option));
-          pick.addEventListener("click", () => isFill
-            ? answerFill(key, check, option)
-            : answerAsk(answerKey, option));
+          pick.addEventListener("click", () => answerAsk(answerKey, option));
           row.append(pick);
         }
         card.append(row);
-      } else if (!isFill) {
+      } else {
         const form = el("form");
         const input = el("input", {type: "text", placeholder: "your answer…"});
         form.append(input, el("button", {}, "Answer"));
@@ -662,6 +610,31 @@ function renderWidgets(view) {
           if (input.value.trim()) answerAsk(answerKey, input.value.trim());
         });
         card.append(form);
+      }
+    } else if (spec.kind === "order") {
+      // A working paper order: the card's own program runs the market
+      // gate; the autopilot records the fill when the gate holds. No
+      // buttons — asks are for direction, the receipt is the gate.
+      card.style.borderColor = "color-mix(in srgb, #4f8ef7 45%, transparent)";
+      const args = spec.refresh?.args || {};
+      card.append(el("p", {class: "fill-line"},
+        `${args.action || "buy"} ${args.quantity ?? "?"} × ` +
+        `${args.contract || args.symbol || "?"} @ $${args.price ?? "?"}` +
+        ` — working paper order`));
+      const check = spec.check;
+      if (!check) {
+        card.append(el("p", {class: "muted"},
+          "armed — awaiting the first market check"));
+      } else if (check.verdict === "fill-supported") {
+        card.append(el("p", {class: "ok-line"},
+          `✓ live market ${check.fill.bid} × ${check.fill.ask} supports ` +
+          `$${check.fill.price} (${check.fill.observed_at}) — ` +
+          "the autopilot records it on its next pass"));
+      } else {
+        card.append(el("p", {class: "violation"},
+          "the live market does not support this order:"));
+        for (const reason of check.reasons || [])
+          card.append(el("p", {class: "violation"}, String(reason)));
       }
     } else if (["line", "bar", "candle", "scatter", "ladder", "flow", "treemap",
                 "relative_range", "connected_scatter", "streamgraph"]
@@ -734,26 +707,6 @@ function engineViolations(key, spec) {
   return null; // verdict pending
 }
 
-function answerProblems(spec, context) {
-  const problems = [];
-  for (const [label, f] of [["fill", spec?.fill], ["exit", spec?.exit]]) {
-    if (!f || !f.confirmed) continue;
-    if (!(f.confirmed in context)) {
-      problems.push(`UNCONFIRMED — ${f.confirmed} not found on this desk`);
-      continue;
-    }
-    const answer = context[f.confirmed];
-    const choice = answer && typeof answer === "object" ? answer.choice : answer;
-    if (String(choice) !== "Confirm fill")
-      problems.push(`the answer at ${f.confirmed} does not read "Confirm fill"`);
-    else if (answer && typeof answer === "object" &&
-             answer.receipt_observed_at &&
-             answer.receipt_observed_at !== f.observed_at)
-      problems.push(`the ${label}'s clock does not match the receipt the ` +
-        `member confirmed (${answer.receipt_observed_at})`);
-  }
-  return problems;
-}
 
 function renderCases(view) {
   const section = el("section", {class: "full"});
@@ -776,10 +729,9 @@ function renderCases(view) {
       card.append(el("p", {class: "invalidation"}, `Wrong if: ${spec.invalidation}`));
     for (const [label, f] of [["fill", spec?.fill], ["exit", spec?.exit]]) {
       if (!f) continue;
-      const confirmed = f.confirmed && view.context[f.confirmed] === "Confirm fill";
       card.append(el("p", {class: "fill-line"},
-        `${label}: ${f.quantity} @ $${f.price} · market ${f.bid} × ${f.ask}` +
-        ` · ${f.observed_at}${confirmed ? " · confirmed ✓" : ""}`));
+        `${label}: ${f.quantity} @ $${f.price} · live market ` +
+        `${f.bid} × ${f.ask} · ${f.observed_at}`));
     }
     if (Array.isArray(spec?.evidence) && spec.evidence.length)
       card.append(el("p", {class: "muted"}, `evidence: ${spec.evidence.join(" · ")}`));
@@ -788,7 +740,7 @@ function renderCases(view) {
     if (engine === null) {
       card.append(el("p", {class: "muted"}, "checking the case contract…"));
     } else {
-      for (const problem of [...engine, ...answerProblems(spec, view.context)])
+      for (const problem of engine)
         card.append(el("p", {class: "violation"}, `⚠ ${problem}`));
     }
     grid.append(card);

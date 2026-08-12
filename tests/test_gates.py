@@ -27,7 +27,7 @@ NOW = datetime.datetime(2026, 8, 12, 18, 32, 0, tzinfo=datetime.timezone.utc)
 def make_fill(**overrides):
     fill = {
         "price": 4.00, "bid": 3.90, "ask": 4.00, "quantity": 2,
-        "observed_at": LIVE_CLOCK, "confirmed": "answers/fill-nvda-190c",
+        "observed_at": LIVE_CLOCK,
     }
     fill.update(overrides)
     return fill
@@ -96,7 +96,7 @@ def test_states_are_the_four_honest_ones():
 
 def test_open_simulated_requires_a_fill():
     violations = gates.case_violations(make_case(state="open-simulated"))
-    assert any("needs its receipted, confirmed fill" in v for v in violations)
+    assert any("needs its receipted fill" in v for v in violations)
 
 
 def test_no_fill_before_open_simulated():
@@ -119,14 +119,17 @@ def test_a_fill_inside_its_market_holds():
     assert gates.case_violations(case) == []
 
 
-def test_a_fill_requires_the_members_confirmation_key():
-    for confirmed in (None, "", "widgets/fill-x", "yes"):
-        case = make_case(
-            state="open-simulated", fill=make_fill(confirmed=confirmed)
-        )
-        assert any(
-            "after the member confirms" in v for v in gates.case_violations(case)
-        ), confirmed
+def test_a_fill_carries_no_confirmation_field():
+    # Paper fills take no human confirmation — the market receipt is the
+    # gate; asks are reserved for direction and real money.
+    case = make_case(
+        state="open-simulated",
+        fill=make_fill(confirmed="answers/fill-nvda-190c"),
+    )
+    assert any(
+        "nothing else, nothing missing" in v
+        for v in gates.case_violations(case)
+    )
 
 
 def test_a_fill_clock_must_carry_its_timezone():
@@ -179,7 +182,7 @@ def test_a_closed_case_with_entry_and_exit_holds():
     case = make_case(
         state="closed",
         fill=make_fill(),
-        exit=make_fill(price=3.95, confirmed="answers/fill-nvda-190c-exit"),
+        exit=make_fill(price=3.95),
     )
     assert gates.case_violations(case) == []
 
@@ -205,13 +208,13 @@ def test_fill_check_supports_a_price_inside_the_live_market():
     assert data["verdict"] == "fill-supported"
     assert data["fill"] == {
         "price": 4.00, "bid": 3.90, "ask": 4.00, "quantity": 2,
-        "observed_at": LIVE_CLOCK, "confirmed": None,
+        "observed_at": LIVE_CLOCK,
     }
-    card = data["ask_card"]
-    assert card["kind"] == "ask"
-    assert card["options"] == ["Confirm fill", "Stand down"]
-    assert "3.9 × 4" in card["question"]
-    assert card["as_of"] == LIVE_CLOCK
+    assert data["contract"] == "NVDA 20260814 190C"
+    assert data["action"] == "buy"
+    # No confirmation machinery: the receipt is the gate, not a question.
+    assert "ask_card" not in data
+    assert "3.9 × 4" in result["summary"]
 
 
 def test_fill_check_rejects_605_against_the_live_market():

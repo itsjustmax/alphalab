@@ -2,19 +2,19 @@
 
 A case (``cases/<id>``) is the desk's unit of research: contract, thesis,
 evidence keys, invalidation, and an honest state — idea, watching,
-open-simulated, closed. A simulated fill enters a case only through two
-gates:
+open-simulated, closed. A simulated fill enters a case only through the
+market gate:
 
-  (a) a live receipted regular-session bid/ask from the engine supports
-      the price — ``fill_check`` fetches that quote itself, so there is
-      no receipt an agent can fabricate; no receipt, no confirmation
-      offered;
-  (b) the member explicitly confirms on the ask card built from that
-      receipt — no confirmation, no fill.
+  a live receipted regular-session bid/ask from the engine contains the
+  price — ``fill_check`` fetches that quote itself, so there is no
+  receipt an agent can fabricate. No receipt, no fill.
 
-These rules are ported from the old desk's validators, which once
-rejected a fabricated $6.05 fill because the live market was 3.90 × 4.00.
-The tests pin that catch.
+Paper fills are the desk's own work and take no human confirmation; the
+member's asks are reserved for direction and risk — and a real-money
+order would take explicit confirmation, but no order route exists here
+by structure. These rules are ported from the old desk's validators,
+which once rejected a fabricated $6.05 fill because the live market was
+3.90 × 4.00. The tests pin that catch.
 """
 
 import datetime
@@ -30,11 +30,9 @@ CASE_FIELDS = {
     "fill", "exit", "as_of",
 }
 CASE_REQUIRED = {"contract", "thesis", "evidence", "invalidation", "state"}
-FILL_FIELDS = {"price", "bid", "ask", "quantity", "observed_at", "confirmed"}
+FILL_FIELDS = {"price", "bid", "ask", "quantity", "observed_at"}
 
 QUOTE_MAX_AGE_SECONDS = 120
-CONFIRM_OPTION = "Confirm fill"
-DECLINE_OPTION = "Stand down"
 
 
 def _now() -> datetime.datetime:
@@ -80,7 +78,7 @@ def fill_violations(fill, label="fill"):
     if set(fill) != FILL_FIELDS:
         return [
             f"the {label} carries exactly price, bid, ask, quantity, "
-            "observed_at, confirmed — nothing else, nothing missing"
+            "observed_at — nothing else, nothing missing"
         ]
     violations = []
     price, bid, ask = (_number(fill[k]) for k in ("price", "bid", "ask"))
@@ -108,12 +106,6 @@ def fill_violations(fill, label="fill"):
         violations.append(
             f"the {label} quote clock {fill['observed_at']} is outside the "
             "regular session (9:30–16:00 ET, Mon–Fri)"
-        )
-    confirmed = fill["confirmed"]
-    if not (isinstance(confirmed, str) and confirmed.startswith("answers/")):
-        violations.append(
-            f"the {label} is recorded only after the member confirms — "
-            "confirmed names the answers/ key that carries their answer"
         )
     return violations
 
@@ -160,7 +152,7 @@ def case_violations(case):
     exit_fill = case.get("exit")
     if state in ("open-simulated", "closed") and fill is None:
         violations.append(
-            f"an {state} case needs its receipted, confirmed fill"
+            f"an {state} case needs its receipted fill"
         )
     if state in ("idea", "watching") and fill is not None:
         violations.append("a fill cannot exist before open-simulated")
@@ -239,13 +231,12 @@ def _quote_from_receipt(raw):
 
 
 def fill_check(arguments, fetch_quote=None, now=None):
-    """Gate (a): may this simulated fill be offered for confirmation at all?
+    """The market gate: may this simulated fill be recorded right now?
 
     Fetches its own live quote (the agent supplies no prices to trust),
     verifies regular session, freshness, and that the price sits inside
-    the receipted bid/ask. An ok answer carries the exact ask card to put
-    up and the fill block to record once — and only once — the member
-    confirms. Any failure offers no card: no receipt, no confirmation.
+    the receipted bid/ask. An ok answer carries the exact fill block to
+    record verbatim; any failure names its reasons. No receipt, no fill.
     """
 
     now = now or _now()
@@ -336,30 +327,16 @@ def fill_check(arguments, fetch_quote=None, now=None):
     clock_text = clock.astimezone(ET).strftime("%H:%M:%S ET · %Y-%m-%d")
     return receipt(
         f"{contract}: {action} {quantity} @ ${price:g} is supported by the "
-        f"live market {bid:g} × {ask:g} — awaiting the member's confirmation",
+        f"live market {bid:g} × {ask:g} (receipted {clock_text}) — "
+        "the fill may be recorded",
         {
-            # One canonical fill block — no top-level price/bid/ask
-            # duplicates to transcribe from the wrong place.
+            # One canonical fill block, ready to record verbatim.
             "verdict": "fill-supported",
             "contract": contract,
             "action": action,
             "fill": {
                 "price": price, "bid": bid, "ask": ask,
                 "quantity": quantity, "observed_at": observed_at,
-                "confirmed": None,
-            },
-            "ask_card": {
-                "kind": "ask",
-                "title": f"Confirm simulated fill — {contract}",
-                "question": (
-                    f"Simulated fill: {action} {quantity} × {contract} @ "
-                    f"${price:g}. Live market {bid:g} × {ask:g}, receipted "
-                    f"{clock_text}. Record this paper fill?"
-                ),
-                "options": [CONFIRM_OPTION, DECLINE_OPTION],
-                "as_of": observed_at,
             },
         },
-        gaps=["a confirmation older than the market is not a fill — re-run "
-              "fill_check if the member answers late"],
     )
