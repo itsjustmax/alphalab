@@ -1,17 +1,18 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
-    "watchlist": "symbols under active attention",
-    "quotes/": "one key per symbol: the latest receipted quote",
-    "findings/": "one key per finding: evidence worth keeping, with its source clock",
+    "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
+    "quotes/": "one key per symbol: the latest receipted quote; the desk renders these as chips in the watchlist strip",
+    "findings/": "one key per finding: {title, source, as_of} — evidence worth keeping; the desk renders the findings feed from these",
     "cases/": "one key per trade case: {contract, thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill is null until the gates pass: fill_check ok (live receipted regular-session bid/ask supporting the price) AND the member's ask-card confirmation; then it is the receipt's exact {price, bid, ask, quantity, observed_at, confirmed: 'answers/fill-<id>'} block. exit: same shape, closed cases only. Run case_check before writing.",
     "answers/": "the member's replies to ask cards, one key per card id; a fill's confirmed field names its answer key here",
     "desk/next_check": "the agent's own next check-in clock (ISO-8601 UTC, >=10 minutes out); the autopilot honors it",
     "desk/focus": "one line: what the next check-in should look at",
     "desk/autopilot": "the autopilot's last action: {last_turn, reason, builds_today, budget} — written by tools/autopilot.py, never by the agent",
+    "desk/audit": "the autopilot's latest gate audit of every case: {clean, cases_checked, violations, as_of} — if it names violations, fixing them is the next turn's first job",
     "widgets/": "the desk: one declarative card per key (widgets convention)",
     "widgets/brief": "the pinned Today card: what the desk is doing and what needs eyes"
   },

@@ -1,7 +1,16 @@
 # The desk contract (this harness's own conventions)
 
+Rendered natively from their own keys — no widget needed: `watchlist`
+(live closes strip), `quotes/SYMBOL` (quote chips), `findings/<id>`
+(evidence feed), `cases/<id>` (case cards, the positions table, and
+every gate verdict). The desk header shows sync age, the autopilot's
+last action, `desk/next_check`, and the `desk/audit` verdict.
+
 Cards are context entries under `widgets/`. Kinds this desk's UI renders:
 
+- candle/line shorthand: {"kind":"candle"|"line","title",
+  "chart":{"symbol","days"?}} — the desk fetches EOD data itself and
+  stamps the clock; preferred for standard charts.
 - metric: {"kind":"metric","title","value","label"?,"detail"?}
 - table:  {"kind":"table","title","columns":[...],"rows":[[...]]}
 - text:   {"kind":"text","title","body"}
@@ -21,12 +30,10 @@ Cards are context entries under `widgets/`. Kinds this desk's UI renders:
   dialogue, not a delivery.
 
 Shared fields: "pinned":true first; "size" compact|standard|wide|full;
-"as_of" ISO clock on every data card. Live cards: "refresh" with
-value_path into this desk's receipts — inline tools
-`result.data.<field>` (a line card: value_path `result.data.points`,
-into `series.0.points`; a candle card: value_path
-`result.data.candles`, into `candles`); full-engine tools
-`result.payload_json.answer.<field>`.
+"as_of" ISO clock on every data card you fill yourself. Explicit
+refresh programs remain for full-engine data: "refresh" with a
+value_path into the receipt — inline tools `result.data.<field>`,
+full-engine tools `result.payload_json.answer.<field>`.
 
 Fill confirmations are program-backed ask cards with a fixed contract:
 the card lives at `widgets/fill-<case-id>` and carries a `refresh`
@@ -46,9 +53,9 @@ autopilot reports its last action in the third.
 
 Cases render from `cases/<id>` directly (they are not widgets): state
 badge, thesis, invalidation, evidence, and the fill with its receipted
-market, clock, and confirmation. A case that breaks the contract renders
-its violations in red — run `case_check` before writing to keep the desk
-clean.
+market, clock, and confirmation. Gate verdicts come from `case_check`
+receipts — a case that breaks the contract renders its violations in
+red, and the autopilot writes the same audit to `desk/audit`.
 
 House rules: one pinned `widgets/brief` Today card; 6-10 cards; clocks
 on data; failures named in titles; the member's answers visible.

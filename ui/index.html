@@ -75,6 +75,22 @@
   input[type=range] { flex: 1; accent-color: #4f8ef7; }
   .readout { font-family: ui-monospace, monospace; font-size: .9rem;
              min-width: 4.5rem; text-align: right; }
+  #liveness { display: flex; gap: .9rem; flex-wrap: wrap; align-items: baseline;
+              font-size: .8rem; margin: .1rem 0 .7rem; }
+  #liveness .ok { color: #4fb98a; }
+  #liveness .warn { color: #d96a6a; }
+  #liveness .busy { color: #f2a43a; }
+  .strip { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .tick { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+          border-radius: 8px; padding: .3rem .6rem; font-size: .85rem;
+          font-family: ui-monospace, monospace; }
+  .tick .up { color: #4fb98a; } .tick .down { color: #d96a6a; }
+  .finding { font-size: .88rem; margin: .35rem 0; }
+  details.workings { border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+                     border-radius: 10px; padding: .6rem .8rem; }
+  details.workings summary { cursor: pointer; font-size: .8rem;
+    text-transform: uppercase; letter-spacing: .06em; opacity: .6; }
+  details.workings section { border: none; padding: .4rem 0; }
 </style>
 
 <header>
@@ -82,6 +98,7 @@
   <span class="muted" id="version"></span>
 </header>
 <div id="members"></div>
+<div id="liveness"></div>
 <details><summary class="muted">What this place is for</summary>
   <p id="framing"></p></details>
 
@@ -131,9 +148,42 @@ function el(tag, attrs = {}, text = "") {
   return node;
 }
 
+// The desk fetches its own standard data (EOD closes, daily bars) through
+// the granted tools, cached by TTL — agents write facts, not wiring.
+// The cached value is the promise itself, so concurrent callers share one call.
+const toolCache = new Map();
+function toolData(tool, args, ttlMinutes) {
+  const cacheKey = tool + JSON.stringify(args);
+  const hit = toolCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < ttlMinutes * 60000) return hit.value;
+  const value = api("POST", `/environments/${envId}/tools/${tool}`, {args})
+    .then(reply => reply.result)
+    .catch(error => ({ok: false, summary: error.message, gaps: [error.message]}));
+  toolCache.set(cacheKey, {at: Date.now(), value});
+  return value;
+}
+
 let you = "";
 let lastRendered = "";
 let lastView = null;
+let lastFetchAt = 0;
+let prevContext = null;
+let prevConversationLength = -1;
+let turnActive = false;
+let turnStarted = 0;
+let lastChange = "";
+let workingsOpen = false;
+
+function contextDiff(previous, current) {
+  const changed = [];
+  const keys = new Set([
+    ...Object.keys(previous || {}), ...Object.keys(current || {})]);
+  for (const key of keys)
+    if (JSON.stringify(previous?.[key]) !== JSON.stringify(current?.[key]))
+      changed.push(key);
+  return changed;
+}
+
 function render(view) {
   // Re-render only on real change: a quiet 5s poll must not wipe
   // hover state or half-built interactions.
@@ -142,6 +192,30 @@ function render(view) {
   lastRendered = fingerprint;
   lastView = view;
   you = view.you;
+
+  // Turn awareness: the autopilot announces its builds at desk/autopilot;
+  // a turn is over when the agent's writes (or its say) land.
+  const autopilotTurn = view.context["desk/autopilot"]?.last_turn;
+  if (prevContext !== null &&
+      autopilotTurn !== prevContext["desk/autopilot"]?.last_turn) {
+    turnActive = true;
+    turnStarted = Date.now();
+  }
+  const changed = contextDiff(prevContext, view.context).filter(k =>
+    !k.startsWith("desk/") && !k.startsWith("intake/") &&
+    !k.startsWith("answers/") && !k.startsWith("~"));
+  if (prevContext !== null && changed.length) {
+    lastChange = `updated ${changed.slice(0, 4).join(", ")}` +
+      (changed.length > 4 ? ` +${changed.length - 4} more` : "") +
+      ` · ${new Date().toLocaleTimeString()}`;
+    turnActive = false;
+  }
+  if (prevConversationLength >= 0 &&
+      view.conversation.length > prevConversationLength)
+    turnActive = false;
+  prevContext = view.context;
+  prevConversationLength = view.conversation.length;
+
   document.getElementById("title").textContent = view.harness.name;
   document.getElementById("version").textContent = view.harness.version;
   document.getElementById("framing").textContent = view.harness.framing || "";
@@ -150,24 +224,202 @@ function render(view) {
     el("span", {class: "chip"}, name + (key === view.you ? " (you)" : ""))));
 
   renderIntake(view);
+  updateLiveness();
   const container = document.getElementById("views");
   container.replaceChildren();
-  if (Object.keys(view.context).some(k => k.startsWith("cases/")))
-    container.append(renderCases(view));
-  for (const declared of view.harness.views) {
-    if (declared.component === "widgets") container.append(renderWidgets(view));
-    else if (declared.component === "board") container.append(renderBoard(view));
-    else if (declared.component === "conversation") container.append(renderConversation(view));
-    else if (declared.component === "journal") container.append(renderJournal());
-    else if (declared.component === "members") { /* rendered in header */ }
-    else container.append(el("section", {},
-      `[${declared.component}] — this client doesn't render that component yet`));
+  for (const section of [
+    renderWatchlist(view),
+    renderPositions(view),
+    Object.keys(view.context).some(k => k.startsWith("cases/"))
+      ? renderCases(view) : null,
+    renderWidgets(view),
+    renderFindings(view),
+    renderConversation(view),
+    renderWorkings(view),
+  ]) if (section) container.append(section);
+}
+
+function updateLiveness() {
+  const bar = document.getElementById("liveness");
+  if (!lastView) return;
+  const parts = [];
+  const age = lastFetchAt
+    ? Math.max(0, Math.round((Date.now() - lastFetchAt) / 1000)) : null;
+  parts.push(el("span", {class: age !== null && age < 30 ? "ok" : "warn"},
+    age !== null ? `● desk synced ${age}s ago` : "● connecting…"));
+  if (turnActive && Date.now() - turnStarted > 10 * 60000) turnActive = false;
+  if (turnActive) {
+    const minutes = Math.floor((Date.now() - turnStarted) / 60000);
+    parts.push(el("span", {class: "busy"},
+      `the agent is at the desk…${minutes ? ` (${minutes}m)` : ""}`));
   }
+  const autopilot = lastView.context["desk/autopilot"];
+  if (autopilot) parts.push(el("span", {},
+    `autopilot: ${autopilot.reason || "on duty"} · ` +
+    `turn ${autopilot.builds_today}/${autopilot.budget}`));
+  const next = lastView.context["desk/next_check"];
+  if (next) {
+    const when = new Date(next);
+    if (!isNaN(when)) parts.push(el("span", {},
+      `next check ${when.toLocaleTimeString("en-US",
+        {timeZone: "America/New_York", hour: "numeric", minute: "2-digit"})} ET`));
+  }
+  const audit = lastView.context["desk/audit"];
+  if (audit) parts.push(el("span", {class: audit.clean ? "ok" : "warn"},
+    audit.clean
+      ? `audit ✓ ${audit.cases_checked} case(s) clean`
+      : `audit ⚠ ${Object.keys(audit.violations || {}).length} case(s) broken`));
+  if (lastChange) parts.push(el("span", {class: "muted"}, lastChange));
+  bar.replaceChildren(...parts);
+}
+setInterval(updateLiveness, 1000);
+
+function watchSymbols(view) {
+  let raw = view.context.watchlist ?? view.context["intake/watchlist"] ?? [];
+  if (typeof raw === "string") raw = raw.split(/[,\s]+/);
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.map(s => String(s).trim().toUpperCase())
+    .filter(s => /^[A-Z.^]{1,6}$/.test(s)))];
+}
+
+function renderWatchlist(view) {
+  const quoted = Object.entries(view.context)
+    .filter(([key, value]) => key.startsWith("quotes/") && value);
+  const quotedSymbols = new Set(quoted.map(([key]) => key.slice(7).toUpperCase()));
+  const symbols = watchSymbols(view).filter(s => !quotedSymbols.has(s));
+  if (!symbols.length && !quoted.length) return null;
+  const section = el("section", {class: "full"});
+  section.append(el("h2", {}, "Watchlist"));
+  const strip = el("div", {class: "strip"});
+  for (const [key, quote] of quoted) {
+    const symbol = key.slice(7).toUpperCase();
+    const body = typeof quote === "object"
+      ? `${quote.last ?? quote.mark ?? ""}` +
+        (quote.bid != null && quote.ask != null ? ` ${quote.bid}×${quote.ask}` : "")
+      : String(quote);
+    const chip = el("div", {class: "tick"});
+    chip.append(el("b", {}, symbol + " "), document.createTextNode(body.trim()));
+    const clock = quote?.as_of || quote?.observed_at;
+    if (clock) chip.title = `receipted quote · as of ${clock}`;
+    strip.append(chip);
+  }
+  for (const symbol of symbols) {
+    const chip = el("div", {class: "tick"}, `${symbol} …`);
+    strip.append(chip);
+    toolData("price_summary", {symbol}, 10).then(receipt => {
+      if (!receipt?.ok) {
+        chip.textContent = `${symbol} — unavailable`;
+        chip.title = (receipt?.gaps || []).join("; ");
+        return;
+      }
+      const d = receipt.data;
+      chip.replaceChildren(
+        el("b", {}, symbol + " "),
+        document.createTextNode(`${d.close_label} `),
+        el("span", {class: d.change_1d_pct >= 0 ? "up" : "down"},
+          `${d.change_1d_pct >= 0 ? "+" : ""}${d.change_1d_pct}%`));
+      chip.title = `${receipt.summary} · as of ${receipt.as_of}`;
+    });
+  }
+  return section.appendChild(strip), section;
+}
+
+function renderPositions(view) {
+  const rows = Object.entries(view.context).filter(([key, c]) =>
+    key.startsWith("cases/") && c &&
+    (c.state === "open-simulated" || (c.state === "closed" && c.fill)));
+  if (!rows.length) return null;
+  const section = el("section", {class: "full"});
+  section.append(el("h2", {}, "Positions — simulated, paper only"));
+  const table = el("table");
+  const head = el("tr");
+  for (const column of ["contract", "state", "entry",
+                        "exit / result", "underlying (EOD)", "wrong if"])
+    head.append(el("td", {class: "key"}, column));
+  table.append(head);
+  for (const [key, c] of rows) {
+    const line = el("tr");
+    line.append(el("td", {}, c.contract || key.slice(6)));
+    const stateCell = el("td");
+    stateCell.append(el("span", {class: `state s-${c.state}`}, c.state));
+    line.append(stateCell);
+    const f = c.fill;
+    line.append(el("td", {class: "val"}, f
+      ? `${f.quantity} @ $${f.price} (${f.bid}×${f.ask}) · ` +
+        String(f.observed_at).slice(0, 10)
+      : "—"));
+    let result = c.state === "open-simulated" ? "open" : "—";
+    if (c.exit && f) {
+      const diff = c.exit.price - f.price;
+      const pct = f.price ? 100 * diff / f.price : 0;
+      result = `$${c.exit.price} (${diff >= 0 ? "+" : ""}${diff.toFixed(2)}` +
+        `/contract, ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)`;
+    }
+    line.append(el("td", {class: "val"}, result));
+    const underlying = el("td", {class: "val"}, "—");
+    const symbol = String(c.contract || "").split(/\s+/)[0];
+    if (/^[A-Z.]{1,6}$/.test(symbol)) {
+      underlying.textContent = "…";
+      toolData("price_summary", {symbol}, 10).then(receipt => {
+        if (!receipt?.ok) { underlying.textContent = "unavailable"; return; }
+        underlying.textContent = `${symbol} ${receipt.data.close_label} ` +
+          `(${receipt.data.change_1d_pct >= 0 ? "+" : ""}` +
+          `${receipt.data.change_1d_pct}% 1d)`;
+        underlying.title = `as of ${receipt.as_of} — EOD close, not a live mark`;
+      });
+    }
+    line.append(underlying);
+    line.append(el("td", {}, c.invalidation || "—"));
+    table.append(line);
+  }
+  section.append(table);
+  return section;
+}
+
+function renderFindings(view) {
+  const items = Object.entries(view.context)
+    .filter(([key, value]) => key.startsWith("findings/") && value);
+  if (!items.length) return null;
+  const section = el("section");
+  section.append(el("h2", {}, "Findings"));
+  for (const [key, f] of items) {
+    const line = el("div", {class: "finding"});
+    const text = typeof f === "object"
+      ? (f.title || f.text || f.body || JSON.stringify(f)) : String(f);
+    line.append(el("b", {}, key.slice(9) + " "));
+    line.append(document.createTextNode(String(text).slice(0, 300)));
+    const clock = f && typeof f === "object" && (f.as_of || f.source_time);
+    if (clock) line.append(el("div", {class: "as-of"},
+      `as of ${clock}${f.source ? " · " + f.source : ""}`));
+    section.append(line);
+  }
+  return section;
+}
+
+function renderWorkings(view) {
+  const drawer = el("details", {class: "full workings"});
+  if (workingsOpen) drawer.setAttribute("open", "");
+  drawer.append(el("summary", {}, "Workings — raw context & journal"));
+  drawer.append(renderBoard(view));
+  const journal = el("section", {class: "full"});
+  journal.append(el("h2", {}, "Journal — everything, forever"));
+  drawer.append(journal);
+  drawer.addEventListener("toggle", () => {
+    workingsOpen = drawer.open;
+    if (drawer.open && !journal.dataset.filled) {
+      journal.dataset.filled = "yes";
+      fillJournal(journal);
+    }
+  });
+  return drawer;
 }
 
 async function answerAsk(answerKey, value) {
   await api("POST", `/environments/${envId}/context`, {key: answerKey, value});
   await api("POST", `/environments/${envId}/build`);
+  turnActive = true;
+  turnStarted = Date.now();
+  updateLiveness();
   refresh();
 }
 
@@ -236,6 +488,9 @@ function renderIntake(view) {
         {key: "intake/" + q.key, value});
     }
     await api("POST", `/environments/${envId}/build`);
+    turnActive = true;
+    turnStarted = Date.now();
+    updateLiveness();
   });
 }
 
@@ -318,7 +573,32 @@ function renderWidgets(view) {
       // Charts read best at full width; an explicit size still wins.
       if (!["compact", "standard", "wide", "full"].includes(spec.size))
         card.classList.add("full");
-      card.append(renderChart(spec));
+      // Shorthand: {"kind":"candle","chart":{"symbol":"NVDA","days":60}} —
+      // the desk fetches and refreshes the data itself; agents write facts.
+      if (spec.chart?.symbol && !spec.candles && !spec.series && !spec.bars) {
+        const holder = el("div");
+        holder.append(el("p", {class: "muted"}, `loading ${spec.chart.symbol}…`));
+        card.append(holder);
+        toolData("daily_bars",
+          {symbol: spec.chart.symbol, days: spec.chart.days || 60}, 30)
+          .then(receipt => {
+            if (!receipt?.ok) {
+              holder.replaceChildren(el("p", {class: "violation"},
+                `⚠ ${receipt?.summary || "data fetch failed"} — chart unavailable`));
+              return;
+            }
+            const filled = spec.kind === "line"
+              ? {...spec, series: [{name: receipt.data.symbol,
+                                    points: receipt.data.points}]}
+              : {...spec, kind: "candle", candles: receipt.data.candles};
+            holder.replaceChildren(renderChart(filled),
+              el("div", {class: "as-of"},
+                `as of ${receipt.as_of}${(receipt.gaps || []).length
+                  ? " · " + receipt.gaps[0] : ""}`));
+          });
+      } else {
+        card.append(renderChart(spec));
+      }
     } else {
       card.append(el("p", {class: "muted"}, `[${spec.kind}] not rendered yet`));
     }
@@ -710,13 +990,6 @@ async function fillJournal(section) {
   section.append(feed);
 }
 
-function renderJournal() {
-  const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "Journal — everything, forever"));
-  fillJournal(section);
-  return section;
-}
-
 function renderConversation(view) {
   const section = el("section");
   section.append(el("h2", {}, "Conversation"));
@@ -739,7 +1012,9 @@ function renderConversation(view) {
 }
 
 async function refresh() {
-  render(await api("GET", `/environments/${envId}?token=${token}`));
+  const view = await api("GET", `/environments/${envId}?token=${token}`);
+  lastFetchAt = Date.now();
+  render(view);
 }
 
 document.getElementById("composer").addEventListener("submit", async event => {

@@ -113,3 +113,37 @@ def test_a_new_trading_date_resets_the_budget():
     rolled = autopilot.roll_date(state(builds_today=36), next_day)
     assert rolled["builds_today"] == 0
     assert rolled["date"] == "2026-08-13"
+
+
+def test_the_audit_names_only_the_broken_cases():
+    cases = {"cases/good": {"state": "idea"}, "cases/bad": {"state": "open"}}
+    verdicts = {"cases/good": [], "cases/bad": ["no receipted fill"]}
+    result = autopilot.audit_violations(cases, lambda key, case: verdicts[key])
+    assert result == {"cases/bad": ["no receipted fill"]}
+
+
+def test_the_audit_runs_once_per_case_change(tmp_path):
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    calls = []
+
+    def fake_api(method, path, body=None):
+        calls.append((method, path))
+        if "tools/case_check" in path:
+            return {"ok": True, "result": {"ok": True,
+                                           "data": {"violations": []}}}
+        return {"ok": True}
+
+    pilot._api = fake_api
+    context = {"cases/nvda": {"state": "idea"}}
+    now = datetime.datetime(2026, 8, 12, 18, 31, 0,
+                            tzinfo=datetime.timezone.utc)
+    pilot.audit(context, now)
+    first = len(calls)
+    pilot.audit(context, now)          # unchanged cases: no rework
+    assert len(calls) == first
+    context["cases/nvda"] = {"state": "watching"}
+    pilot.audit(context, now)          # changed: audited again
+    assert len(calls) > first
+    audits = [c for c in calls if c == ("POST", "/environments/env/context")]
+    assert len(audits) == 2

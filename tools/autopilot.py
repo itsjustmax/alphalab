@@ -79,6 +79,21 @@ def roll_date(state, now):
     return state
 
 
+def audit_violations(cases, check):
+    """The post-turn audit: run the case gate over every case.
+
+    Pure — `check(key, case)` returns that case's violations; the result
+    maps only the broken cases to what is broken, by name.
+    """
+
+    violations = {}
+    for key in sorted(cases):
+        found = check(key, cases[key])
+        if found:
+            violations[key] = found
+    return violations
+
+
 def decide(context, state, now, budget=DEFAULT_BUDGET):
     """(action, reason): should the desk take a revision turn right now?
 
@@ -145,11 +160,52 @@ class Pilot:
         with urllib.request.urlopen(request, timeout=60) as response:
             return json.loads(response.read())
 
+    def _check_case(self, key, case):
+        try:
+            reply = self._api(
+                "POST", f"/environments/{self.environment}/tools/case_check",
+                {"args": {"case": case, "id": key[6:]}})
+        except Exception as error:
+            return [f"case_check did not answer: {str(error)[:120]}"]
+        result = reply.get("result") or {}
+        data = result.get("data") or {}
+        if isinstance(data.get("violations"), list):
+            return [str(item) for item in data["violations"]]
+        if result.get("ok"):
+            return []
+        return [str(gap) for gap in result.get("gaps") or ["case_check failed"]]
+
+    def audit(self, context, now):
+        """Audit the cases after they change; the verdict lands at desk/audit
+        where the next turn (and the desk header) can see it."""
+
+        cases = {k: v for k, v in context.items() if k.startswith("cases/")}
+        fingerprint = json.dumps(cases, sort_keys=True, default=str)
+        if fingerprint == self.state.get("audit_fingerprint"):
+            return None
+        violations = audit_violations(cases, self._check_case)
+        self.state["audit_fingerprint"] = fingerprint
+        self._save()
+        self._api("POST", f"/environments/{self.environment}/context", {
+            "key": "desk/audit",
+            "value": {
+                "clean": not violations,
+                "cases_checked": len(cases),
+                "violations": violations,
+                "as_of": now.isoformat(timespec="seconds"),
+            },
+        })
+        return violations
+
     def tick(self, now=None):
         now = now or utc_now()
         roll_date(self.state, now)
         view = self._api("GET", f"/environments/{self.environment}")
         context = view.get("context") or {}
+        audited = self.audit(context, now)
+        if audited:
+            print(f"[{utc_now():%H:%M:%S}] audit: {len(audited)} case(s) "
+                  f"broken — {', '.join(sorted(audited))}", flush=True)
         action, reason = decide(context, self.state, now, self.budget)
         if action == "build":
             self._api("POST", f"/environments/{self.environment}/build", {})
