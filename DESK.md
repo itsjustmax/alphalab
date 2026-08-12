@@ -37,9 +37,10 @@ Cards are context entries under `widgets/`. Kinds this desk's UI renders:
   "render":"a JS function body receiving (d3, data, svg, width, height)",
   "height"?} — an agent-authored chart, run in a sandboxed frame (unique
   origin: no token, no desk, no parent page). When the member wants a
-  chart this vocabulary lacks — even one they saw elsewhere and describe
-  or link — recreate the idea here with your own data; you cannot fetch
-  links, so build from their description.
+  chart this vocabulary lacks — even one they saw elsewhere — learn from
+  their link: wire a card with refresh {tool: "web_fetch", args: {url}},
+  read the landed text (script bodies included) next turn, then author
+  the chart here with your own data.
 - slider: {"kind":"slider","title","label"?,"min","max","step","value","unit"?}
   — interactive; the member's setting lands at `answers/<card-id>`
 - choices:{"kind":"choices","title","question"?,"options":[...]} — one tap,

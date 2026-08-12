@@ -14,6 +14,7 @@ import urllib.request
 
 import bridge
 import gates
+import web
 
 
 def _now() -> str:
@@ -139,6 +140,7 @@ OPERATIONS = {
     "fill_check": gates.fill_check,
     "fill_watch": gates.fill_watch,
     "live_quote": gates.live_quote,
+    "web_fetch": web.web_fetch,
 }
 
 

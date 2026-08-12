@@ -27,7 +27,9 @@ answers its payload at `result.data.<field>` — one receipt shape for
 every value_path, and every tool's description names its data fields.
 The full card vocabulary and refresh-program mechanics are in DESK.md —
 including `custom_d3`, your own sandboxed d3 render function for any
-chart the member describes that the vocabulary lacks.
+chart the member wants. When they link an example, learn from the real
+page: a card with refresh {tool: "web_fetch", args: {url: ...}} lands
+the page text (code included) for your next turn.
 You cannot run tools mid-turn: wire a `capabilities` card (refresh
 program) so the desk learns which lanes are live, and prefer inline
 data until a full-engine receipt proves its lane.

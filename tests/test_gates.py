@@ -480,3 +480,47 @@ def test_a_fill_must_name_one_of_the_trades_contracts():
                       fill=make_fill(contract="AMD 20260821 175C"))
     violations = gates.trade_violations(trade)
     assert any("not one of this trade's contracts" in v for v in violations)
+
+
+# -- web_fetch: the desk learns from the member's links -----------------------
+
+def test_web_fetch_refuses_local_and_private_addresses():
+    import web
+
+    for url in ("http://localhost:8642/x", "http://127.0.0.1/x",
+                "http://192.168.1.10/a", "http://10.0.0.5/b",
+                "http://169.254.1.1/c", "ftp://example.com/d",
+                "http://mymac.local/e", ""):
+        assert web.blocked_reason(url) is not None, url
+    assert web.blocked_reason("https://observablehq.com/@d3/gallery") is None
+
+
+def test_web_fetch_strips_html_but_keeps_the_code():
+    import web
+
+    markup = ("<html><head><title>Chart demo</title>"
+              "<style>body{color:red}</style></head>"
+              "<body><p>A streamgraph.</p>"
+              "<script>const layers = d3.stack().offset(d3.stackOffsetWiggle);"
+              "</script></body></html>")
+    result = web.web_fetch(
+        {"url": "https://example.com/demo"},
+        opener=lambda url: (url, "text/html; charset=utf-8",
+                            markup.encode()))
+    assert result["ok"] is True
+    assert result["data"]["title"] == "Chart demo"
+    assert "A streamgraph." in result["data"]["text"]
+    assert "stackOffsetWiggle" in result["data"]["text"]  # code kept
+    assert "color:red" not in result["data"]["text"]      # styles gone
+    assert any("no scripts ran" in gap for gap in result["gaps"])
+
+
+def test_web_fetch_bounds_and_names_truncation():
+    import web
+
+    huge = b"x" * 50_000
+    result = web.web_fetch(
+        {"url": "https://example.com/big", "max_chars": 1_000},
+        opener=lambda url: (url, "text/plain", huge))
+    assert result["data"]["chars"] == 1_000
+    assert any("bounded to 1000 chars" in gap for gap in result["gaps"])

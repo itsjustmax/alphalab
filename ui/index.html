@@ -160,6 +160,7 @@
   button.primary { border-color: var(--accent); color: var(--accent);
                    font-weight: 650; white-space: nowrap; }
   /* Trade details modal */
+  #trade-modal[hidden] { display: none; }
   #trade-modal { position: fixed; inset: 0; z-index: 50;
     background: rgba(5, 8, 14, .66); backdrop-filter: blur(3px);
     display: flex; align-items: flex-start; justify-content: center;
@@ -1069,7 +1070,8 @@ function renderTrades(view) {
     card.append(head);
     const contracts = el("div", {class: "contracts"});
     for (const contract of spec?.contracts || [])
-      contracts.append(el("span", {}, String(contract)));
+      contracts.append(el("span", {}, typeof contract === "string"
+        ? contract : JSON.stringify(contract).slice(0, 60)));
     if (contracts.childNodes.length) card.append(contracts);
     if (spec?.thesis) {
       const line = String(spec.thesis);
@@ -1168,7 +1170,8 @@ function openTradeModal(key) {
   body.replaceChildren();
   const contracts = el("div", {class: "contracts"});
   for (const contract of spec.contracts || [])
-    contracts.append(el("span", {}, String(contract)));
+    contracts.append(el("span", {}, typeof contract === "string"
+      ? contract : JSON.stringify(contract).slice(0, 60)));
   body.append(contracts);
   body.append(el("div", {class: "section-label"}, "Thesis"));
   body.append(el("p", {}, spec.thesis || "—"));

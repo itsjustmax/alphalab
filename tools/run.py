@@ -24,7 +24,7 @@ engine_home = os.environ.get(
 sys.path.insert(0, os.path.abspath(engine_home))
 
 INLINE = {"daily_bars", "price_summary", "capabilities", "trade_check",
-          "case_check", "fill_check", "fill_watch", "live_quote"}
+          "case_check", "fill_check", "fill_watch", "live_quote", "web_fetch"}
 
 # Manifest tool names alias their engine operations, so a direct caller
 # using either name reaches the same place (agents tripped on this).

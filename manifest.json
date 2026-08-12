@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -50,6 +50,19 @@
         "python3",
         "tools/run.py",
         "daily_bars"
+      ]
+    },
+    {
+      "name": "web_fetch",
+      "description": "Fetch one public web page or file the member pointed at and learn from it — static GET, no keys, HTML stripped to text with script bodies kept (for chart examples, the code is the lesson). Local/private addresses refused by structure. Use via a card's refresh program; read the landed text next turn. data: {url, content_type, title, chars, text}.",
+      "args": {
+        "url": "the http(s) URL to fetch",
+        "max_chars": "text budget (default 20000, max 60000)"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "web_fetch"
       ]
     },
     {
