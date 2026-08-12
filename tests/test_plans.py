@@ -21,6 +21,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import autopilot  # noqa: E402
 import plans  # noqa: E402
 
+# Every test writes plan archives to a sandbox, never the real library.
+import tempfile  # noqa: E402
+_MODULE_LIBRARY = tempfile.mkdtemp()
+os.environ["ALPHALAB_PLAN_LIBRARY"] = _MODULE_LIBRARY
+
 
 def _program(code, tests=None, inputs=None, explanation="managed"):
     return {"code": code, "explanation": explanation,
@@ -405,7 +410,7 @@ class AutopilotArchives(unittest.TestCase):
         os.environ["ALPHALAB_PLAN_LIBRARY"] = self.directory
 
     def tearDown(self):
-        os.environ.pop("ALPHALAB_PLAN_LIBRARY", None)
+        os.environ["ALPHALAB_PLAN_LIBRARY"] = _MODULE_LIBRARY
 
     def test_first_active_pass_archives_the_endorsement(self):
         context = _live_context()
