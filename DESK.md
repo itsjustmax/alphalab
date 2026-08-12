@@ -28,14 +28,21 @@ into `series.0.points`; a candle card: value_path
 `result.data.candles`, into `candles`); full-engine tools
 `result.payload_json.answer.<field>`.
 
-Fill confirmations are ask cards with a fixed contract: the card lives at
-`widgets/fill-<case-id>`, its body is the `ask_card` a passing
-`fill_check` receipt answered with (receipted market and clock included,
-options exactly ["Confirm fill", "Stand down"]), and the member's answer
-lands at `answers/fill-<case-id>`. Never compose one by hand — the only
-sanctioned card is the one the receipt produced. After acting on the
-answer, remove the card; the answer key stays, because a recorded fill's
-`confirmed` field points at it.
+Fill confirmations are program-backed ask cards with a fixed contract:
+the card lives at `widgets/fill-<case-id>` and carries a `refresh`
+program running `fill_check` (`value_path` `result.data`, `into`
+`check`). This client renders the question and the
+["Confirm fill", "Stand down"] buttons from `check.ask_card` **only**
+while `check.verdict` is `fill-supported`; a refused or absent receipt
+renders its reasons and no controls — a hand-composed fill card can
+never collect an answer here. The member's answer lands at
+`answers/fill-<case-id>`. After acting on the answer, remove the card;
+the answer key stays, because a recorded fill's `confirmed` field
+points at it.
+
+`desk/next_check`, `desk/focus`, and `desk/autopilot` are the unassisted
+loop's keys: the agent schedules itself with the first two; the
+autopilot reports its last action in the third.
 
 Cases render from `cases/<id>` directly (they are not widgets): state
 badge, thesis, invalidation, evidence, and the fill with its receipted
