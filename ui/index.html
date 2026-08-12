@@ -104,10 +104,8 @@
            font: inherit; }
   button:hover { border-color: var(--accent); }
   .hint { font-size: .75rem; color: var(--muted); margin-top: .35rem; }
-  #liveness { display: flex; gap: .45rem; flex-wrap: wrap; align-items: center;
-              font-size: .78rem; margin: .2rem 0 .9rem; }
-  #liveness span { border: 1px solid var(--border); border-radius: 999px;
-                   padding: .18rem .6rem; background: var(--surface); }
+  #liveness { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;
+              font-size: .76rem; margin: .3rem 0 1rem; color: var(--muted); }
   #liveness .ok { color: var(--up); }
   #liveness .warn { color: var(--down); }
   #liveness .busy { color: var(--warn); }
@@ -161,6 +159,27 @@
   #askdesk { margin-top: 1.1rem; border-color: rgba(91, 140, 255, .45); }
   button.primary { border-color: var(--accent); color: var(--accent);
                    font-weight: 650; white-space: nowrap; }
+  /* Trade details modal */
+  #trade-modal { position: fixed; inset: 0; z-index: 50;
+    background: rgba(5, 8, 14, .66); backdrop-filter: blur(3px);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 4vh 1rem; overflow-y: auto; }
+  #trade-modal-card { width: min(860px, 96vw); background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: 18px;
+    padding: 1.2rem 1.4rem; box-shadow: 0 24px 80px rgba(0,0,0,.5); }
+  #trade-modal-head { display: flex; align-items: baseline; gap: .6rem; }
+  #trade-modal-head h3 { margin: 0; font-size: 1.15rem; flex: 1; }
+  #trade-modal-body .section-label { font-size: .72rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--muted);
+    margin: 1rem 0 .35rem; }
+  #trade-modal-body .evidence-grid { display: grid; gap: .8rem;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .face-stats { font-family: var(--mono); font-size: .8rem;
+    color: var(--muted); margin-top: .4rem; }
+  .details-btn { margin-top: .6rem; font-size: .82rem; padding: .35rem .8rem; }
+  .custom-frame { width: 100%; border: none; border-radius: 8px;
+                  background: transparent; }
+
   /* Focused conversation drawer */
   #focus-drawer { position: fixed; top: 0; right: 0; height: 100vh;
     width: min(430px, 92vw); background: var(--surface);
@@ -185,15 +204,22 @@
 
 <header>
   <h1 id="title">…</h1>
-  <span class="muted" id="version"></span>
-  <span class="muted">market research desk · paper by structure</span>
   <span class="controls">
     <select id="font-pick" title="typeface"></select>
     <button id="theme-toggle" title="light / dark">◐</button>
   </span>
 </header>
-<div id="members"></div>
 <div id="liveness"></div>
+
+<div id="trade-modal" hidden>
+  <div id="trade-modal-card">
+    <div id="trade-modal-head">
+      <h3 id="trade-modal-title">Trade</h3>
+      <button id="trade-modal-close" title="close">✕</button>
+    </div>
+    <div id="trade-modal-body"></div>
+  </div>
+</div>
 
 <aside id="focus-drawer">
   <div id="focus-head">
@@ -397,6 +423,7 @@ const composerReady = new Promise((resolve, reject) => {
       "earnings”, “chart SPX against its gamma pin”, “what changed today?”",
   });
   form.addEventListener("manifold:submitted", () => {
+    markMemberTurn();
     turnActive = true;
     turnStarted = Date.now();
     updateLiveness();
@@ -467,11 +494,6 @@ function render(view) {
   prevConversationLength = view.conversation.length;
 
   document.getElementById("title").textContent = view.harness.name;
-  document.getElementById("version").textContent = view.harness.version;
-  const members = document.getElementById("members");
-  members.replaceChildren(...Object.entries(view.members).map(([key, name]) =>
-    el("span", {class: "chip"}, name + (key === view.you ? " (you)" : ""))));
-
   renderIntake(view);
   updateLiveness();
   const container = document.getElementById("views");
@@ -561,25 +583,50 @@ function renderWatchlist(view) {
     strip.append(chip);
   }
   for (const symbol of symbols) {
-    const chip = el("div", {class: "tick"}, `${symbol} …`);
+    const chip = el("div", {class: "tick", "data-symbol": symbol},
+                    `${symbol} …`);
     strip.append(chip);
-    toolData("price_summary", {symbol}, 10).then(receipt => {
-      if (!receipt?.ok) {
-        chip.textContent = `${symbol} — unavailable`;
-        chip.title = (receipt?.gaps || []).join("; ");
-        return;
-      }
-      const d = receipt.data;
-      chip.replaceChildren(
-        el("b", {}, symbol + " "),
-        document.createTextNode(`${d.close_label} `),
-        el("span", {class: d.change_1d_pct >= 0 ? "up" : "down"},
-          `${d.change_1d_pct >= 0 ? "+" : ""}${d.change_1d_pct}%`));
-      chip.title = `${receipt.summary} · as of ${receipt.as_of}`;
-    });
+    fillTick(chip, symbol);
   }
   return section.appendChild(strip), section;
 }
+
+// A watchlist chip streams: the standing reqMktData subscription keeps
+// it fresh; end-of-day closes are the honest fallback when the broker
+// lane is down. Chips re-pull every 20 seconds in place.
+async function fillTick(chip, symbol) {
+  const live = await toolData("live_quote", {symbol}, 0.32);
+  if (live?.ok && live.data?.quote?.last != null) {
+    const quote = live.data.quote;
+    const reference = quote.close;
+    const pct = reference ? 100 * (quote.last - reference) / reference : null;
+    chip.replaceChildren(
+      el("b", {}, symbol + " "),
+      document.createTextNode(`${quote.last} `),
+      el("span", {class: (pct ?? 0) >= 0 ? "up" : "down"},
+        pct === null ? "" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`));
+    chip.title = `streaming ${quote.bid} × ${quote.ask} · as of ` +
+      `${quote.observed_at}`;
+    return;
+  }
+  const eod = await toolData("price_summary", {symbol}, 10);
+  if (!eod?.ok) {
+    chip.textContent = `${symbol} — unavailable`;
+    chip.title = [...(live?.gaps || []), ...(eod?.gaps || [])].join("; ");
+    return;
+  }
+  const d = eod.data;
+  chip.replaceChildren(
+    el("b", {}, symbol + " "),
+    document.createTextNode(`${d.close_label} `),
+    el("span", {class: d.change_1d_pct >= 0 ? "up" : "down"},
+      `${d.change_1d_pct >= 0 ? "+" : ""}${d.change_1d_pct}%`));
+  chip.title = `EOD close (stream unavailable) · ${eod.summary}`;
+}
+setInterval(() => {
+  for (const chip of document.querySelectorAll(".tick[data-symbol]"))
+    fillTick(chip, chip.dataset.symbol);
+}, 20000);
 
 function renderPositions(view) {
   const rows = Object.entries(view.context).filter(([key, c]) =>
@@ -695,8 +742,17 @@ function renderWorkings(view) {
   return drawer;
 }
 
+async function markMemberTurn() {
+  try {
+    await api("POST", `/environments/${envId}/context`, {
+      key: "desk/member_turn",
+      value: new Date().toISOString().slice(0, 19) + "+00:00"});
+  } catch (error) { /* the marker is best-effort */ }
+}
+
 async function answerAsk(answerKey, value) {
   await api("POST", `/environments/${envId}/context`, {key: answerKey, value});
+  await markMemberTurn();
   const model = chosenModel("ask");
   await api("POST", `/environments/${envId}/build`, model ? {model} : {});
   turnActive = true;
@@ -778,6 +834,7 @@ function renderIntake(view) {
         {key: "intake/" + q.key, value});
     }
     const model = chosenModel("build");
+    await markMemberTurn();
     await api("POST", `/environments/${envId}/build`, model ? {model} : {});
     turnActive = true;
     turnStarted = Date.now();
@@ -913,6 +970,14 @@ function renderWidgets(view) {
         for (const reason of check.reasons || [])
           card.append(el("p", {class: "violation"}, String(reason)));
       }
+    } else if (spec.kind === "custom_d3") {
+      // An agent-authored chart: its render function runs in a sandboxed
+      // frame (unique origin — no token, no desk, no parent) with d3 and
+      // its own data. The member describes any chart; the agent builds it.
+      card.classList.add("chart");
+      if (!["compact", "standard", "wide", "full"].includes(spec.size))
+        card.classList.add("full");
+      card.append(customD3(spec));
     } else if (["line", "bar", "candle", "scatter", "ladder", "flow", "treemap",
                 "relative_range", "connected_scatter", "streamgraph"]
                .includes(spec.kind)) {
@@ -1006,33 +1071,180 @@ function renderTrades(view) {
     for (const contract of spec?.contracts || [])
       contracts.append(el("span", {}, String(contract)));
     if (contracts.childNodes.length) card.append(contracts);
-    if (spec?.thesis) card.append(el("p", {}, spec.thesis));
-    if (spec?.invalidation) {
-      const line = el("p", {class: "invalidation"});
-      line.append(el("b", {}, "Invalidation "));
-      line.append(document.createTextNode(spec.invalidation));
-      card.append(line);
+    if (spec?.thesis) {
+      const line = String(spec.thesis);
+      card.append(el("p", {},
+        line.length > 150 ? line.slice(0, 147) + "…" : line));
     }
-    for (const [label, f] of [["fill", spec?.fill], ["exit", spec?.exit]]) {
-      if (!f) continue;
-      card.append(el("p", {class: "fill-line"},
-        `${label}: ${f.quantity} × ${f.contract || "?"} @ $${f.price} · ` +
-        `live market ${f.bid} × ${f.ask} · ${f.observed_at}`));
-    }
-    if (Array.isArray(spec?.evidence) && spec.evidence.length)
-      card.append(el("p", {class: "muted"}, `evidence: ${spec.evidence.join(" · ")}`));
-    if (spec?.as_of) card.append(el("div", {class: "as-of"}, `as of ${spec.as_of}`));
+    card.append(el("div", {class: "face-stats"}, tradeStats(key, spec, view)));
     const engine = engineViolations(key, spec);
     if (engine === null) {
       card.append(el("p", {class: "muted"}, "checking the trade contract…"));
-    } else {
-      for (const problem of engine)
-        card.append(el("p", {class: "violation"}, `⚠ ${problem}`));
+    } else if (engine.length) {
+      card.append(el("p", {class: "violation"},
+        `⚠ ${engine.length} gate violation(s) — details inside`));
     }
+    const details = el("button", {class: "details-btn", type: "button"},
+                       "Details");
+    details.addEventListener("click", () => openTradeModal(key));
+    card.append(details);
     grid.append(card);
   }
   section.append(grid);
   return section;
+}
+
+function tradeStats(key, spec, view) {
+  const parts = [];
+  const fill = spec?.fill;
+  if (fill) parts.push(`filled ${fill.quantity} @ $${fill.price}`);
+  const exit = spec?.exit;
+  if (exit && fill) {
+    const diff = exit.price - fill.price;
+    parts.push(`exit $${exit.price} (${diff >= 0 ? "+" : ""}${diff.toFixed(2)})`);
+  }
+  const orderCard = view.context[`widgets/fill-${key.slice(7)}`];
+  if (orderCard) {
+    const args = ((orderCard.refresh || {}).args) || {};
+    const verdict = orderCard.check?.verdict;
+    parts.push(`working $${args.price ?? "?"} — ` +
+      (verdict === "fill-supported" ? "market supports"
+        : verdict === "refused" ? "waiting on market" : "armed"));
+  }
+  if (!parts.length) parts.push("no position, no working order");
+  return parts.join(" · ");
+}
+
+function evidenceCell(key) {
+  const value = lastView?.context?.[key];
+  const cell = el("div", {class: "card"});
+  cell.append(el("h3", {}, key));
+  const chartKinds = ["line", "bar", "candle", "scatter", "ladder", "flow",
+    "treemap", "relative_range", "connected_scatter", "streamgraph"];
+  if (value == null) {
+    cell.append(el("p", {class: "muted"}, "not on the desk"));
+  } else if (key.startsWith("findings/")) {
+    cell.append(el("p", {}, value.title || String(value).slice(0, 220)));
+    if (value.source) cell.append(el("p", {class: "muted"}, value.source));
+  } else if (key.startsWith("quotes/")) {
+    const quote = value.quote || value;
+    cell.append(el("p", {class: "fill-line"},
+      `${quote.bid ?? "?"} × ${quote.ask ?? "?"} · last ${quote.last ?? "?"}`));
+  } else if (chartKinds.includes(value.kind)) {
+    if (value.chart?.symbol && !value.candles && !value.series) {
+      const holder = el("div");
+      cell.append(holder);
+      toolData("daily_bars",
+        {symbol: value.chart.symbol, days: value.chart.days || 60}, 30)
+        .then(receipt => {
+          if (!receipt?.ok) return;
+          const filled = value.kind === "line"
+            ? {...value, series: [{name: receipt.data.symbol,
+                                   points: receipt.data.points}]}
+            : {...value, kind: "candle", candles: receipt.data.candles};
+          holder.append(renderChart(filled));
+        });
+    } else {
+      cell.append(renderChart(value));
+    }
+  } else if (value.kind === "metric") {
+    cell.append(el("div", {class: "metric"}, String(value.value ?? "—")));
+    if (value.label) cell.append(el("div", {class: "metric-label"}, value.label));
+  } else {
+    cell.append(el("pre", {class: "data-body"},
+      JSON.stringify(value, null, 1).slice(0, 1400)));
+  }
+  const clock = value && typeof value === "object" &&
+    (value.as_of || value.observed_at);
+  if (clock) cell.append(el("div", {class: "as-of"}, `as of ${clock}`));
+  return cell;
+}
+
+function openTradeModal(key) {
+  const spec = lastView?.context?.[key] || {};
+  document.getElementById("trade-modal-title").textContent =
+    key.slice(7).replace(/-/g, " ");
+  const body = document.getElementById("trade-modal-body");
+  body.replaceChildren();
+  const contracts = el("div", {class: "contracts"});
+  for (const contract of spec.contracts || [])
+    contracts.append(el("span", {}, String(contract)));
+  body.append(contracts);
+  body.append(el("div", {class: "section-label"}, "Thesis"));
+  body.append(el("p", {}, spec.thesis || "—"));
+  body.append(el("div", {class: "section-label"}, "Invalidation"));
+  const invalidation = el("p", {class: "invalidation"});
+  invalidation.append(document.createTextNode(spec.invalidation || "—"));
+  body.append(invalidation);
+  for (const [label, f] of [["Fill", spec.fill], ["Exit", spec.exit]]) {
+    if (!f) continue;
+    body.append(el("div", {class: "section-label"}, label));
+    body.append(el("p", {class: "fill-line"},
+      `${f.quantity} × ${f.contract || "?"} @ $${f.price} · live market ` +
+      `${f.bid} × ${f.ask} · ${f.observed_at}`));
+  }
+  const verdicts = engineViolations(key, spec);
+  if (verdicts && verdicts.length) {
+    body.append(el("div", {class: "section-label"}, "Gate verdicts"));
+    for (const problem of verdicts)
+      body.append(el("p", {class: "violation"}, `⚠ ${problem}`));
+  }
+  if (Array.isArray(spec.evidence) && spec.evidence.length) {
+    body.append(el("div", {class: "section-label"}, "Evidence"));
+    const evidence = el("div", {class: "evidence-grid"});
+    for (const evidenceKey of spec.evidence.slice(0, 8))
+      evidence.append(evidenceCell(evidenceKey));
+    body.append(evidence);
+  }
+  if (spec.as_of) body.append(el("div", {class: "as-of"},
+    `as of ${spec.as_of}`));
+  document.getElementById("trade-modal").hidden = false;
+}
+document.getElementById("trade-modal-close").addEventListener("click", () =>
+  document.getElementById("trade-modal").hidden = true);
+document.getElementById("trade-modal").addEventListener("click", event => {
+  if (event.target.id === "trade-modal")
+    document.getElementById("trade-modal").hidden = true;
+});
+
+let d3SourcePromise = null;
+function d3SourceText() {
+  d3SourcePromise = d3SourcePromise ||
+    fetch(`/app/${envId}/ui/d3.min.js?token=${token}`).then(r => r.text());
+  return d3SourcePromise;
+}
+function customD3(spec) {
+  const frame = el("iframe", {class: "custom-frame",
+    sandbox: "allow-scripts",
+    style: `height:${Number(spec.height) || 400}px`});
+  const frameCode = [
+    '<!doctype html><meta charset="utf-8">',
+    '<style>body{margin:0;font-family:sans-serif;color:#98a1b3}',
+    'svg{width:100%;height:auto;display:block}</style><body>',
+    "<scr" + "ipt>",
+    'window.addEventListener("message", event => {',
+    '  const {d3Source, render, data} = event.data || {};',
+    '  try {',
+    '    (0, eval)(d3Source);',
+    '    const draw = new Function("d3", "data", "svg", "width", "height", render);',
+    '    const svg = d3.select(document.body).append("svg")',
+    '      .attr("viewBox", "0 0 860 380");',
+    '    draw(window.d3, data, svg, 860, 380);',
+    '  } catch (error) {',
+    '    document.body.textContent = "custom chart failed: " + error.message;',
+    '  }',
+    '});',
+    "</scr" + "ipt>",
+  ].join("\n");
+  frame.srcdoc = frameCode;
+  frame.addEventListener("load", async () => {
+    frame.contentWindow.postMessage({
+      d3Source: await d3SourceText(),
+      render: String(spec.render || ""),
+      data: spec.data ?? null,
+    }, "*");
+  });
+  return frame;
 }
 
 function renderChart(spec) {

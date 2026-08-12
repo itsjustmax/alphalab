@@ -309,3 +309,17 @@ def test_the_sweep_releases_only_orphaned_desk_streams(tmp_path):
              if path.endswith("/tools/market_stream")
              and body["args"].get("action") == "stop"]
     assert stops == [{"action": "stop", "stream_id": "s-orphan"}]
+
+
+def test_a_member_turn_holds_the_autopilot_off():
+    # The member (or their client) just fired a build: desk/member_turn is
+    # stamped, and the autopilot must not race it — even on a fresh desk.
+    fresh = state(last_turn=None)
+    context = {**ACTIVE_DESK, "desk/member_turn": "2026-08-12T18:25:00+00:00"}
+    action, reason = autopilot.decide(context, fresh, RTH)
+    assert action == "wait" and "minimum gap" in reason
+    # An old member turn does not hold the desk forever — the next build
+    # is honest maintenance, not a "first turn" that rebuilds from scratch.
+    context["desk/member_turn"] = "2026-08-12T16:00:00+00:00"
+    action, reason = autopilot.decide(context, fresh, RTH)
+    assert action == "build" and "maintenance" in reason

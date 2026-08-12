@@ -206,8 +206,11 @@ def decide(context, state, now, budget=DEFAULT_BUDGET):
             not any(k.startswith("widgets/") for k in keys):
         return "wait", "waiting for the member's intake — the first move is theirs"
     last_turn = gates.parse_clock(state.get("last_turn"))
-    if last_turn is not None:
-        since = (now - last_turn).total_seconds()
+    member_turn = gates.parse_clock((context or {}).get("desk/member_turn"))
+    turns = [turn for turn in (last_turn, member_turn) if turn is not None]
+    reference = max(turns) if turns else None
+    if reference is not None:
+        since = (now - reference).total_seconds()
         if since < MIN_GAP_SECONDS:
             return "wait", f"inside the {MIN_GAP_SECONDS // 60}-minute minimum gap"
     if state.get("builds_today", 0) >= budget:
@@ -224,10 +227,10 @@ def decide(context, state, now, budget=DEFAULT_BUDGET):
     next_check = gates.parse_clock((context or {}).get("desk/next_check"))
     if next_check is not None and next_check <= now:
         return "build", "the desk's own next-check clock came due"
-    if last_turn is None:
+    if reference is None:
         return "build", "first turn on this desk"
     gap = quiet_gap_minutes(now)
-    if (now - last_turn).total_seconds() >= gap * 60:
+    if (now - reference).total_seconds() >= gap * 60:
         return "build", f"quiet-period maintenance ({phase(now)}, {gap}m gap)"
     return "wait", "nothing due"
 

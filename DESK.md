@@ -33,6 +33,13 @@ Cards are context entries under `widgets/`. Kinds this desk's UI renders:
 - ladder: {"kind":"ladder","title","rungs":[{"label","value"}]}
 - flow:   {"kind":"flow","title","nodes":[...],"links":[[i,j,value],...]}
 - treemap:{"kind":"treemap","title","leaves":[{"label","value"}]}
+- custom_d3: {"kind":"custom_d3","title","data":<any JSON>,
+  "render":"a JS function body receiving (d3, data, svg, width, height)",
+  "height"?} — an agent-authored chart, run in a sandboxed frame (unique
+  origin: no token, no desk, no parent page). When the member wants a
+  chart this vocabulary lacks — even one they saw elsewhere and describe
+  or link — recreate the idea here with your own data; you cannot fetch
+  links, so build from their description.
 - slider: {"kind":"slider","title","label"?,"min","max","step","value","unit"?}
   — interactive; the member's setting lands at `answers/<card-id>`
 - choices:{"kind":"choices","title","question"?,"options":[...]} — one tap,
@@ -67,7 +74,8 @@ advances, the card retires, and the recording is announced in the
 conversation. Asks (kind "ask") are reserved for the member's own
 decisions: direction, risk, what to pursue or drop.
 
-`desk/next_check`, `desk/focus`, and `desk/autopilot` are the unassisted
+`desk/member_turn` is stamped by this client whenever the member fires a
+turn — the autopilot yields to it. `desk/next_check`, `desk/focus`, and `desk/autopilot` are the unassisted
 loop's keys: the agent schedules itself with the first two; the
 autopilot reports its last action in the third.
 
