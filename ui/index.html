@@ -59,6 +59,7 @@
   .focus-chip { border: none; background: transparent; color: var(--muted);
                 cursor: pointer; padding: .1rem .25rem; border-radius: 6px;
                 line-height: 0; opacity: 0; transition: opacity .15s; }
+  .tick .focus-chip, .finding .focus-chip, td .focus-chip { opacity: .55; }
   .card:hover .focus-chip, section:hover .focus-chip { opacity: .9; }
   .focus-chip:hover { color: var(--accent); background: var(--surface-2); }
   .metric { font-size: 1.9rem; font-weight: 700; line-height: 1.1;
@@ -342,6 +343,7 @@ applyFont();
 // else from the desk enters, so answers stay grounded in that data.
 let focusKey = null;
 let focusMode = "data";
+let focusPayload = null;
 let focusThread = [];
 function focusChip(key, spec, mode = "data") {
   const chip = el("button", {class: "focus-chip", type: "button",
@@ -356,10 +358,11 @@ function focusChip(key, spec, mode = "data") {
   });
   return chip;
 }
-function openFocus(key, mode = "data") {
+function openFocus(key, mode = "data", payload = null) {
   if (focusKey !== key || focusMode !== mode) focusThread = [];
   focusKey = key;
   focusMode = mode;
+  focusPayload = payload;
   document.getElementById("focus-title").textContent =
     key + (mode === "structure" ? " · structure" : "");
   document.getElementById("focus-sub").textContent = mode === "structure"
@@ -379,7 +382,7 @@ function renderFocusLog() {
   log.scrollTop = log.scrollHeight;
 }
 function focusPrompt(question) {
-  const cell = lastView?.context?.[focusKey];
+  const cell = focusPayload ?? lastView?.context?.[focusKey];
   const parts = focusMode === "structure" ? [
     "You are AlphaLab's desk agent in a FOCUSED conversation about the",
     "STRUCTURE of one widget on a shared market-research desk — how it",
@@ -629,6 +632,7 @@ function renderWatchlist(view) {
     const chip = el("div", {class: "tick"});
     chip.append(el("b", {}, symbol + " "),
       document.createTextNode(body.trim() || "awaiting first receipt"));
+    chip.append(focusChip(key, entry));
     const clock = quote?.observed_at || quote?.as_of || entry?.as_of;
     if (clock) chip.title = `receipted quote · as of ${clock}`;
     if (entry?.refresh_error) {
@@ -640,10 +644,25 @@ function renderWatchlist(view) {
   for (const symbol of symbols) {
     const chip = el("div", {class: "tick", "data-symbol": symbol},
                     `${symbol} …`);
+    chip.append(chipFocus(`watchlist/${symbol}`, chip, symbol));
     strip.append(chip);
     fillTick(chip, symbol);
   }
   return section.appendChild(strip), section;
+}
+
+function chipFocus(key, chip, symbol) {
+  const fold = focusChip(key, null);
+  fold.addEventListener("click", () => {
+    focusPayload = {
+      symbol,
+      showing: chip.textContent,
+      source_note: chip.title,
+      watchlist: lastView?.context?.watchlist ?? null,
+      quote_entry: lastView?.context?.[`quotes/${symbol}`] ?? null,
+    };
+  });
+  return fold;
 }
 
 // The watchlist is real-time: one batched engine read per cycle pulls
@@ -742,8 +761,10 @@ function renderPositions(view) {
   table.append(head);
   for (const [key, c] of rows) {
     const line = el("tr");
-    line.append(el("td", {},
-      (c.contracts || []).join(" + ") || (c.fill || {}).contract || key.slice(7)));
+    const name = el("td", {},
+      (c.contracts || []).join(" + ") || (c.fill || {}).contract || key.slice(7));
+    name.append(focusChip(key, c));
+    line.append(name);
     const stateCell = el("td");
     stateCell.append(el("span", {class: `state s-${c.state}`}, c.state));
     line.append(stateCell);
@@ -790,6 +811,7 @@ function renderFindings(view) {
     const line = el("div", {class: "finding"});
     const text = typeof f === "object"
       ? (f.title || f.text || f.body || JSON.stringify(f)) : String(f);
+    line.append(focusChip(key, f));
     line.append(el("b", {}, key.slice(9) + " "));
     line.append(document.createTextNode(String(text).slice(0, 300)));
     const clock = f && typeof f === "object" && (f.as_of || f.source_time);

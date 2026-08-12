@@ -586,3 +586,18 @@ def test_web_fetch_bounds_and_names_truncation():
         opener=lambda url: (url, "text/plain", huge))
     assert result["data"]["chars"] == 1_000
     assert any("bounded to 1000 chars" in gap for gap in result["gaps"])
+
+
+def test_indices_stream_as_indices_not_stocks():
+    requests = []
+
+    def invoke_batch(operations):
+        requests.extend(arguments for _, arguments in operations)
+        return [{"ok": True, "data": {"rows": []}} for _ in operations]
+
+    gates.live_quotes({"symbols": ["SPX", "NVDA"], "warm": True},
+                      invoke_batch=invoke_batch)
+    spx = [r for r in requests if r.get("symbol") == "SPX"]
+    nvda = [r for r in requests if r.get("symbol") == "NVDA"]
+    assert spx and all(r.get("sec_type") == "IND" for r in spx)
+    assert nvda and all("sec_type" not in r for r in nvda)

@@ -289,11 +289,19 @@ def _parse_order(arguments, tool):
                   "quantity": quantity, "contract": contract}
 
 
+INDEX_SYMBOLS = {"SPX", "XSP", "NDX", "VIX", "DJI", "RUT"}
+
+
 def _contract_request(arguments):
-    request = {"symbol": str(arguments.get("symbol") or "").strip().upper()}
+    symbol = str(arguments.get("symbol") or "").strip().upper()
+    request = {"symbol": symbol}
     for field in ("sec_type", "expiration", "strike", "right"):
         if arguments.get(field) not in (None, ""):
             request[field] = arguments[field]
+    # An index is not a stock: without this, an SPX stream asks the broker
+    # for STK:SPX, which does not exist — and never prints a tick.
+    if "sec_type" not in request and symbol in INDEX_SYMBOLS:
+        request["sec_type"] = "IND"
     return request
 
 
@@ -478,7 +486,8 @@ def live_quotes(arguments, invoke_batch=None):
         invoke_batch = bridge.invoke_many
 
     def request(symbol):
-        return {"symbol": symbol, "action": "latest", "limit": 1}
+        return {**_contract_request({"symbol": symbol}),
+                "action": "latest", "limit": 1}
 
     replies = invoke_batch([("ibkr.market_stream", request(s))
                             for s in symbols])
@@ -503,7 +512,8 @@ def live_quotes(arguments, invoke_batch=None):
         quiet = []
     if quiet:
         starts = [("ibkr.market_stream",
-                   {"symbol": s, "action": "start", "owner": "alphalab-desk"})
+                   {**_contract_request({"symbol": s}),
+                    "action": "start", "owner": "alphalab-desk"})
                   for s in quiet]
         retries = [("ibkr.market_stream", request(s)) for s in quiet]
         batched = invoke_batch(starts + retries)
