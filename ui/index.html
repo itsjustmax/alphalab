@@ -4,10 +4,10 @@
 <title>Manifold</title>
 <style>
   :root { color-scheme: light dark; font-family: -apple-system, "Segoe UI", sans-serif; }
-  body { margin: 0; padding: 1.2rem; max-width: 1080px; margin-inline: auto;
-         background: Canvas; color: CanvasText; }
+  body { margin: 0; padding: 1.4rem 1.2rem 2.5rem; max-width: 1140px;
+         margin-inline: auto; background: Canvas; color: CanvasText; }
   header { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; }
-  h1 { font-size: 1.25rem; margin: 0; }
+  h1 { font-size: 1.55rem; margin: 0; letter-spacing: -.01em; }
   .muted { opacity: .6; font-size: .85rem; }
   #members { display: flex; gap: .4rem; flex-wrap: wrap; margin-block: .6rem; }
   .chip { border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
@@ -32,8 +32,14 @@
   .card.pinned { border-color: color-mix(in srgb, CanvasText 45%, transparent); }
   .chart svg { width: 100%; height: auto; display: block; }
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
-  section { border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
-            border-radius: 10px; padding: .8rem; }
+  section { border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+            border-radius: 12px; padding: .9rem 1rem;
+            background: color-mix(in srgb, CanvasText 2.5%, Canvas); }
+  .card { background: Canvas; }
+  #askdesk { margin-top: 1rem;
+             border-color: color-mix(in srgb, #4f8ef7 45%, transparent); }
+  button.primary { border-color: #4f8ef7; color: #4f8ef7; font-weight: 600;
+                   white-space: nowrap; }
   h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
        opacity: .6; margin: 0 0 .6rem; }
   #framing { white-space: pre-wrap; font-size: .9rem; opacity: .85; }
@@ -96,6 +102,7 @@
 <header>
   <h1 id="title">…</h1>
   <span class="muted" id="version"></span>
+  <span class="muted">market research desk · paper by structure</span>
 </header>
 <div id="members"></div>
 <div id="liveness"></div>
@@ -110,12 +117,16 @@
 
 <main id="views"></main>
 
-<form id="composer">
-  <input type="text" id="line" autocomplete="off"
-         placeholder="Say something — or @Name to hand them work, key=value for the context">
-  <button>Send</button>
-</form>
-<p class="hint">@Name text → ask · key=value → shared context · anything else → say</p>
+<section id="askdesk">
+  <h2>Ask the desk</h2>
+  <form id="composer">
+    <input type="text" id="line" autocomplete="off"
+           placeholder="Tell the desk what to do — “build a case on NVDA into earnings”, “chart SPX against its gamma pin”, “what changed today?”">
+    <button class="primary">Send to the desk</button>
+  </form>
+  <p class="hint">The desk agent reads this, takes a turn, and updates the board.
+     Raw plumbing (key=value, @member handoffs) lives in Workings.</p>
+</section>
 
 <script>
 const params = new URLSearchParams(location.search);
@@ -404,6 +415,29 @@ function renderWorkings(view) {
   const journal = el("section", {class: "full"});
   journal.append(el("h2", {}, "Journal — everything, forever"));
   drawer.append(journal);
+  const plumbing = el("form");
+  const input = el("input", {type: "text",
+    placeholder: "plumbing: key=value sets context · @Name text hands work · else says"});
+  plumbing.append(input, el("button", {}, "Apply"));
+  plumbing.addEventListener("submit", async event => {
+    event.preventDefault();
+    const line = input.value.trim();
+    if (!line) return;
+    try {
+      const ask = line.match(/^@(\S+)\s+(.+)$/s);
+      const set = line.match(/^([\w./-]+)=(.+)$/s);
+      if (ask) await api("POST", `/environments/${envId}/ask`,
+        {member: ask[1], text: ask[2]});
+      else if (set) {
+        let value; try { value = JSON.parse(set[2]); } catch { value = set[2]; }
+        await api("POST", `/environments/${envId}/context`,
+          {key: set[1], value});
+      } else await api("POST", `/environments/${envId}/say`, {text: line});
+      input.value = "";
+      refresh();
+    } catch (error) { alert(error.message); }
+  });
+  drawer.append(plumbing);
   drawer.addEventListener("toggle", () => {
     workingsOpen = drawer.open;
     if (drawer.open && !journal.dataset.filled) {
@@ -567,7 +601,8 @@ function renderWidgets(view) {
         });
         card.append(form);
       }
-    } else if (["line", "bar", "candle", "scatter", "ladder", "flow", "treemap"]
+    } else if (["line", "bar", "candle", "scatter", "ladder", "flow", "treemap",
+                "relative_range", "connected_scatter", "streamgraph"]
                .includes(spec.kind)) {
       card.classList.add("chart");
       // Charts read best at full width; an explicit size still wins.
@@ -694,7 +729,8 @@ function renderCases(view) {
 function renderChart(spec) {
   if (typeof d3 === "undefined")
     return el("p", {class: "violation"}, "⚠ chart library not loaded — the chart cannot render");
-  const tall = ["ladder", "treemap", "flow", "candle"].includes(spec.kind);
+  const tall = ["ladder", "treemap", "flow", "candle",
+                "relative_range", "streamgraph"].includes(spec.kind);
   const width = 860, height = tall ? 360 : 300;
   const margin = {top: 24, bottom: 34,
     right: ["scatter", "ladder", "flow", "treemap", "bar"].includes(spec.kind) ? 14 : 56,
@@ -757,6 +793,27 @@ function renderChart(spec) {
     const ticks = x.domain().filter((_, i, all) => i % Math.ceil(all.length / 9) === 0);
     g.append("g").attr("transform", `translate(0,${inner.h})`)
       .call(d3.axisBottom(x).tickValues(ticks).tickSize(0)).call(styleAxis);
+    // Supply/demand zone overlays (ported from the old desk): translucent
+    // bands behind the candles, labeled at the left edge.
+    for (const zone of (spec.zones || []).slice(0, 16)) {
+      const upper = +zone.upper, lower = +zone.lower;
+      if (!isFinite(upper) || !isFinite(lower) || upper < lower) continue;
+      const color = zone.zone_type === "supply" ? down : up;
+      g.append("rect")
+        .attr("x", 0).attr("width", inner.w)
+        .attr("y", y(Math.min(upper, y.domain()[1])))
+        .attr("height", Math.max(2,
+          y(Math.max(lower, y.domain()[0])) - y(Math.min(upper, y.domain()[1]))))
+        .attr("fill", color).attr("fill-opacity", 0.10);
+      g.append("line")
+        .attr("x1", 0).attr("x2", inner.w)
+        .attr("y1", y(upper)).attr("y2", y(upper))
+        .attr("stroke", color).attr("stroke-opacity", 0.35)
+        .attr("stroke-dasharray", "2,3");
+      g.append("text").attr("x", 4).attr("y", y(upper) + 11)
+        .attr("fill", color).attr("font-size", "9px").attr("font-weight", "600")
+        .text(`${zone.label || zone.zone_type} ${fmt(lower)}–${fmt(upper)}`);
+    }
     const stick = g.selectAll("g.candle").data(candles).join("g");
     stick.append("line")
       .attr("x1", c => x(c.date) + x.bandwidth() / 2)
@@ -826,6 +883,103 @@ function renderChart(spec) {
       .attr("text-anchor", r => r.value < 0 ? "end" : "start")
       .attr("fill", axisColor).attr("font-size", "9px")
       .text(r => r.value);
+  } else if (spec.kind === "relative_range") {
+    // Percent distance from one reference (ported from the old desk):
+    // strikes vs spot, zones vs the last close — anything measured from here.
+    const reference = +spec.reference?.value;
+    const rows = (spec.rows || [])
+      .map(r => ({label: String(r.label), value: +r.value}))
+      .filter(r => isFinite(r.value) && isFinite(reference) && reference > 0)
+      .map(r => ({label: r.label, pct: 100 * (r.value - reference) / reference}));
+    const y = d3.scaleBand().domain(rows.map(r => r.label))
+      .range([0, inner.h]).padding(0.3);
+    const spread = Math.max(1, d3.max(rows, r => Math.abs(r.pct)) || 1);
+    const x = d3.scaleLinear().domain([-spread, spread]).nice().range([0, inner.w]);
+    g.append("g").call(d3.axisLeft(y).tickSize(0)).call(styleAxis);
+    g.append("g").attr("transform", `translate(0,${inner.h})`)
+      .call(d3.axisBottom(x).ticks(6).tickFormat(v => `${v > 0 ? "+" : ""}${v}%`)
+        .tickSize(-inner.h)).call(styleAxis)
+      .selectAll("line").attr("stroke", gridColor);
+    g.append("line").attr("x1", x(0)).attr("x2", x(0))
+      .attr("y1", 0).attr("y2", inner.h).attr("stroke", axisColor);
+    g.append("text").attr("x", x(0) + 4).attr("y", -8)
+      .attr("fill", axisColor).attr("font-size", "10px")
+      .text(`${spec.reference?.label || "reference"} ${fmt(reference)}`);
+    g.selectAll("rect.rr").data(rows).join("rect")
+      .attr("y", r => y(r.label)).attr("height", y.bandwidth())
+      .attr("x", r => Math.min(x(0), x(r.pct)))
+      .attr("width", r => Math.max(1, Math.abs(x(r.pct) - x(0))))
+      .attr("rx", 2)
+      .attr("fill", r => r.pct < 0 ? down : up).attr("fill-opacity", 0.75);
+    g.selectAll("text.rr").data(rows).join("text")
+      .attr("x", r => x(r.pct) + (r.pct < 0 ? -4 : 4))
+      .attr("y", r => y(r.label) + y.bandwidth() / 2 + 3)
+      .attr("text-anchor", r => r.pct < 0 ? "end" : "start")
+      .attr("fill", axisColor).attr("font-size", "9px")
+      .text(r => `${r.pct > 0 ? "+" : ""}${r.pct.toFixed(1)}%`);
+  } else if (spec.kind === "connected_scatter") {
+    // A path through x/y over time: volume vs premium, IV vs price.
+    const points = (spec.points || []).map(p =>
+      ({x: +p.x, y: +p.y, label: p.label}));
+    const x = d3.scaleLinear().domain(d3.extent(points, p => p.x)).nice()
+      .range([0, inner.w]);
+    const y = d3.scaleLinear().domain(d3.extent(points, p => p.y)).nice()
+      .range([inner.h, 0]);
+    g.append("g").call(d3.axisLeft(y).ticks(5).tickSize(-inner.w))
+      .call(styleAxis).selectAll("line").attr("stroke", gridColor);
+    g.append("g").attr("transform", `translate(0,${inner.h})`)
+      .call(d3.axisBottom(x).ticks(6).tickSize(0)).call(styleAxis);
+    g.append("path").datum(points)
+      .attr("fill", "none").attr("stroke", palette[0])
+      .attr("stroke-width", 1.6).attr("stroke-opacity", 0.6)
+      .attr("d", d3.line().x(p => x(p.x)).y(p => y(p.y)));
+    const dot = g.selectAll("g.cs").data(points).join("g");
+    dot.append("circle")
+      .attr("cx", p => x(p.x)).attr("cy", p => y(p.y))
+      .attr("r", (p, i) => i === points.length - 1 ? 5 : 3)
+      .attr("fill", (p, i) => i === points.length - 1 ? palette[1] : palette[0]);
+    dot.filter(p => p.label).append("text")
+      .attr("x", p => x(p.x) + 7).attr("y", p => y(p.y) - 5)
+      .attr("fill", axisColor).attr("font-size", "9px").text(p => p.label);
+  } else if (spec.kind === "streamgraph") {
+    // Composition over time: share of volume, attention, premium by name.
+    const series = (spec.series || []).map(s => ({
+      name: String(s.name || ""), points: new Map(
+        (s.points || []).map(([px, py]) => [String(px), +py || 0])),
+    }));
+    // Union of x values in author order — labels like "Aug 10" must not
+    // be resorted lexicographically.
+    const xValues = [];
+    for (const s of series)
+      for (const key of s.points.keys())
+        if (!xValues.includes(key)) xValues.push(key);
+    const rows = xValues.map(v =>
+      Object.fromEntries([["__x", v],
+        ...series.map(s => [s.name, s.points.get(v) ?? 0])]));
+    const stacked = d3.stack().keys(series.map(s => s.name))
+      .offset(d3.stackOffsetWiggle).order(d3.stackOrderInsideOut)(rows);
+    const x = d3.scalePoint().domain(xValues).range([0, inner.w]);
+    const y = d3.scaleLinear()
+      .domain([d3.min(stacked.flat(), d => d[0]), d3.max(stacked.flat(), d => d[1])])
+      .nice().range([inner.h, 0]);
+    const ticks = xValues.filter((_, i, all) => i % Math.ceil(all.length / 7) === 0);
+    g.append("g").attr("transform", `translate(0,${inner.h})`)
+      .call(d3.axisBottom(x).tickValues(ticks).tickSize(0)).call(styleAxis);
+    g.selectAll("path.stream").data(stacked).join("path")
+      .attr("fill", (d, i) => palette[i % palette.length])
+      .attr("fill-opacity", 0.8)
+      .attr("d", d3.area()
+        .x(d => x(d.data.__x)).y0(d => y(d[0])).y1(d => y(d[1]))
+        .curve(d3.curveCatmullRom));
+    const legend = g.append("g").attr("font-size", "10px");
+    series.forEach((s, index) => {
+      const item = legend.append("g")
+        .attr("transform", `translate(${index * 96}, -8)`);
+      item.append("rect").attr("width", 8).attr("height", 8)
+        .attr("y", -8).attr("fill", palette[index % palette.length]);
+      item.append("text").attr("x", 12).attr("fill", axisColor)
+        .text(s.name || `series ${index + 1}`);
+    });
   } else if (spec.kind === "flow") {
     const graph = d3.sankey()
       .nodeWidth(10).nodePadding(14)
@@ -1023,14 +1177,11 @@ document.getElementById("composer").addEventListener("submit", async event => {
   const line = box.value.trim();
   if (!line) return;
   try {
-    const ask = line.match(/^@(\S+)\s+(.+)$/s);
-    const set = line.match(/^([\w./-]+)=(.+)$/s);
-    if (ask) await api("POST", `/environments/${envId}/ask`, {member: ask[1], text: ask[2]});
-    else if (set) {
-      let value; try { value = JSON.parse(set[2]); } catch { value = set[2]; }
-      await api("POST", `/environments/${envId}/context`, {key: set[1], value});
-    }
-    else await api("POST", `/environments/${envId}/say`, {text: line});
+    await api("POST", `/environments/${envId}/say`, {text: line});
+    await api("POST", `/environments/${envId}/build`);
+    turnActive = true;
+    turnStarted = Date.now();
+    updateLiveness();
     box.value = "";
     refresh();
   } catch (error) { alert(error.message); }

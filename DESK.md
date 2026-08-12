@@ -16,8 +16,18 @@ Cards are context entries under `widgets/`. Kinds this desk's UI renders:
 - text:   {"kind":"text","title","body"}
 - line:   {"kind":"line","title","series":[{"name","points":[[x,y],...]}]}
 - bar:    {"kind":"bar","title","bars":[{"label","value"}]}
-- candle: {"kind":"candle","title","candles":[[date,o,h,l,c],...]}
+- candle: {"kind":"candle","title","candles":[[date,o,h,l,c],...],
+  "zones"?:[{"label","zone_type":"supply"|"demand","lower","upper"},...]} —
+  zones draw as translucent bands behind the candles (≤16)
 - scatter:{"kind":"scatter","title","points":[{"x","y","label"?,"size"?}]}
+- relative_range: {"kind":"relative_range","title",
+  "reference":{"label","value"},"rows":[{"label","value"},...]} —
+  each row as % distance from the reference (strikes vs spot, zones vs close)
+- connected_scatter: {"kind":"connected_scatter","title",
+  "points":[{"x","y","label"?},...]} — a path through x/y in order;
+  the newest point is emphasized
+- streamgraph: {"kind":"streamgraph","title",
+  "series":[{"name","points":[[x,y],...]},...]} — composition over time
 - ladder: {"kind":"ladder","title","rungs":[{"label","value"}]}
 - flow:   {"kind":"flow","title","nodes":[...],"links":[[i,j,value],...]}
 - treemap:{"kind":"treemap","title","leaves":[{"label","value"}]}
