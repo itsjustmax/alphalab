@@ -382,3 +382,41 @@ def test_the_bridge_lifts_stream_rows_to_data():
     })
     assert reply["data"]["rows"] == [{"bid": 1.0}]
     assert reply["data"]["stream_id"] == "s-1"
+
+
+# -- the engine contract (adapter + bridge) -----------------------------------
+
+def test_the_adapter_grant_has_no_order_route():
+    import adapter
+
+    assert adapter.screen("ibkr.quote.snapshot") is None
+    assert adapter.screen("ibkr.market_stream") is None
+    for forbidden in ("ibkr.orders.submit", "ibkr.orders.modify_stop",
+                      "trade.idea.save", "ibkr.account.summary", ""):
+        refusal = adapter.screen(forbidden)
+        assert refusal is not None, forbidden
+    assert "no order route" in adapter.screen("ibkr.orders.submit")
+
+
+def test_the_adapter_bounds_receipts_to_entry_size():
+    import adapter
+
+    oversized = {"ok": True, "summary": "big",
+                 "rows": [{"i": i, "pad": "x" * 60} for i in range(500)],
+                 "answer": {"blob": "y" * 300_000}}
+    bounded = adapter.bound(oversized)
+    assert len(bounded["rows"]) <= adapter.MAX_ROWS
+    encoded = json.dumps(bounded, ensure_ascii=False)
+    assert len(encoded.encode("utf-8")) <= adapter.MAX_RECEIPT_BYTES
+    assert any("bounded" in warning for warning in bounded["warnings"])
+
+
+def test_the_bridge_normalizes_the_native_envelope_too():
+    import bridge
+
+    native = {"ok": True, "operation": "ibkr.quote.snapshot",
+              "answer": {"quote": {"bid": 3.9, "ask": 4.0}},
+              "rows": [{"bid": 3.9}]}
+    normalized = bridge.normalize(dict(native))
+    assert normalized["data"]["quote"]["ask"] == 4.0
+    assert normalized["data"]["rows"] == [{"bid": 3.9}]
