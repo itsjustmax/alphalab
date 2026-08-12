@@ -66,7 +66,9 @@ mechanically** — the receipt's exact fill block lands in the case, the
 state advances to open-simulated (a `…-exit` card writes `exit` and
 closes), and the card retires. You never transcribe a fill; your next
 turn narrates it — update the brief, plan the exit. To cancel a working
-order, write null on its card. When you revise an open case, carry its
+order, write null on its card. An armed order card is a standing
+instruction: routine turns leave it alone; re-price it only as a
+deliberate decision, and say so in the room. When you revise an open case, carry its
 recorded `fill` through unchanged. The audit is your test suite: the
 verdict on every case lands at `desk/audit` before your next turn.
 

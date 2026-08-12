@@ -128,13 +128,10 @@
 
 <section id="askdesk">
   <h2>Ask the desk</h2>
-  <form id="composer">
-    <input type="text" id="line" autocomplete="off"
-           placeholder="Tell the desk what to do — “build a case on NVDA into earnings”, “chart SPX against its gamma pin”, “what changed today?”">
-    <button class="primary">Send to the desk</button>
-  </form>
+  <div id="askdesk-mount"></div>
   <p class="hint">The desk agent reads this, takes a turn, and updates the board.
-     Raw plumbing (key=value, @member handoffs) lives in Workings.</p>
+     The fold icon picks which model runs the task; raw plumbing
+     (key=value, @member handoffs) lives in Workings.</p>
 </section>
 
 <script>
@@ -183,33 +180,36 @@ function toolData(tool, args, ttlMinutes) {
   return value;
 }
 
-// Model routing (platform primitive): every submit control carries a
-// selector — the member picks which model runs that task. A deep model
-// for building the desk, an inexpensive one for a quick question.
-let modelCatalog = [{id: "sonnet", label: "Claude Sonnet"}];
-const modelsReady = api("GET", "/models")
-  .then(list => { if (Array.isArray(list) && list.length) modelCatalog = list; })
-  .catch(() => {});
-function chosenModel(scope) {
-  return localStorage.getItem(`alphalab-model-${scope}`) || modelCatalog[0].id;
-}
-function modelSelect(scope) {
-  const select = el("select", {class: "model-select",
-    title: "which model runs this task"});
-  const stored = chosenModel(scope);
-  for (const model of modelCatalog) {
-    const option = el("option", {value: model.id}, model.label);
-    if (model.id === stored) option.setAttribute("selected", "");
-    select.append(option);
-  }
-  select.addEventListener("change", () =>
-    localStorage.setItem(`alphalab-model-${scope}`, select.value));
-  return select;
-}
-modelsReady.then(() => {
-  const form = document.getElementById("composer");
-  form.insertBefore(modelSelect("ask"), form.querySelector("button"));
+// The agentic text box is the platform's (composer.js): the Manifold
+// mark — the fold — is the model button, the paired submit takes the
+// turn, and every invocation is routed and audited by the platform.
+const composerReady = new Promise((resolve, reject) => {
+  const script = document.createElement("script");
+  script.src = `/composer.js?token=${token}`;
+  script.onload = resolve;
+  script.onerror = () => reject(new Error("composer.js failed to load"));
+  document.head.append(script);
+}).then(() => {
+  const form = Manifold.composer({
+    mount: document.getElementById("askdesk-mount"),
+    envId, token, scope: "ask",
+    placeholder: "Tell the desk what to do — “build a case on NVDA into " +
+      "earnings”, “chart SPX against its gamma pin”, “what changed today?”",
+  });
+  form.addEventListener("manifold:submitted", () => {
+    turnActive = true;
+    turnStarted = Date.now();
+    updateLiveness();
+    refresh();
+  });
 });
+composerReady.catch(error => {
+  document.getElementById("askdesk-mount").replaceChildren(
+    el("p", {class: "violation"}, `⚠ ${error.message} — the desk cannot take asks`));
+});
+function chosenModel(scope) {
+  return window.Manifold ? Manifold.chosenModel(scope) : "";
+}
 
 let you = "";
 let lastRendered = "";
@@ -495,8 +495,8 @@ function renderWorkings(view) {
 
 async function answerAsk(answerKey, value) {
   await api("POST", `/environments/${envId}/context`, {key: answerKey, value});
-  await api("POST", `/environments/${envId}/build`,
-    {model: chosenModel("ask")});
+  const model = chosenModel("ask");
+  await api("POST", `/environments/${envId}/build`, model ? {model} : {});
   turnActive = true;
   turnStarted = Date.now();
   updateLiveness();
@@ -562,7 +562,8 @@ function renderIntake(view) {
   const button = el("button", {style: "margin-top:.6rem"}, "Build the desk");
   const row = el("div", {style: "display:flex;gap:.5rem;align-items:center"});
   row.append(button);
-  modelsReady.then(() => row.append(modelSelect("build")));
+  composerReady.then(() =>
+    row.append(Manifold.modelButton({token, scope: "build"}))).catch(() => {});
   form.append(row);
   form.addEventListener("submit", async event => {
     event.preventDefault();
@@ -574,8 +575,8 @@ function renderIntake(view) {
       if (value) await api("POST", `/environments/${envId}/context`,
         {key: "intake/" + q.key, value});
     }
-    await api("POST", `/environments/${envId}/build`,
-      {model: chosenModel("build")});
+    const model = chosenModel("build");
+    await api("POST", `/environments/${envId}/build`, model ? {model} : {});
     turnActive = true;
     turnStarted = Date.now();
     updateLiveness();
@@ -1231,22 +1232,6 @@ async function refresh() {
   render(view);
 }
 
-document.getElementById("composer").addEventListener("submit", async event => {
-  event.preventDefault();
-  const box = document.getElementById("line");
-  const line = box.value.trim();
-  if (!line) return;
-  try {
-    await api("POST", `/environments/${envId}/say`, {text: line});
-    await api("POST", `/environments/${envId}/build`,
-      {model: chosenModel("ask")});
-    turnActive = true;
-    turnStarted = Date.now();
-    updateLiveness();
-    box.value = "";
-    refresh();
-  } catch (error) { alert(error.message); }
-});
 
 assetsReady.catch(error => console.error(error)).then(refresh);
 const stream = new EventSource(`/environments/${envId}/events?token=${token}`);
