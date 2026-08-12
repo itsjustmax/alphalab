@@ -14,7 +14,10 @@ member's asks are reserved for direction and risk — and a real-money
 order would take explicit confirmation, but no order route exists here
 by structure. These rules are ported from the old desk's validators,
 which once rejected a fabricated $6.05 fill because the live market was
-3.90 × 4.00. The tests pin that catch.
+3.90 × 4.00 — a RECORDED fill's price must sit inside its receipted
+market, always. The gate itself executes like the market would: a
+marketable limit fills at the receipted ask (buys) or bid (sells), and
+a limit inside the spread rests. The tests pin all of it.
 """
 
 import datetime
@@ -331,30 +334,47 @@ def _gate_quote(parsed, quote, now, extra=None):
             [f"quote clock {observed_at} falls outside 9:30–16:00 ET "
              "Mon–Fri; regular-session markets only"],
         )
-    if not bid <= price <= ask:
-        return _refused(
-            f"{contract}: fill ${price:g} sits outside the live market "
-            f"{bid:g} × {ask:g}",
-            [f"the live receipted market is {bid:g} × {ask:g} as of "
-             f"{observed_at}; ${price:g} is not in it"],
-        )
+    # Marketable-limit semantics, like the market would actually do:
+    # a buy executes AT the ask the moment the limit reaches it (price
+    # improvement included); a limit inside the spread RESTS until the
+    # market comes to it. Sells mirror against the bid.
+    if action == "buy":
+        if price < ask:
+            return _refused(
+                f"{contract}: buy limit ${price:g} rests below the ask "
+                f"({bid:g} × {ask:g})",
+                [f"the live ask is {ask:g} as of {observed_at}; a buy "
+                 f"limit of ${price:g} rests until the ask comes to it"],
+            )
+        executed = ask
+    else:
+        if price > bid:
+            return _refused(
+                f"{contract}: sell limit ${price:g} rests above the bid "
+                f"({bid:g} × {ask:g})",
+                [f"the live bid is {bid:g} as of {observed_at}; a sell "
+                 f"limit of ${price:g} rests until the bid comes to it"],
+            )
+        executed = bid
     clock_text = clock.astimezone(ET).strftime("%H:%M:%S ET · %Y-%m-%d")
     data = {
-        # One canonical fill block, ready to record verbatim.
+        # One canonical fill block, ready to record verbatim. The price
+        # is the EXECUTION (ask for buys, bid for sells), never the limit.
         "verdict": "fill-supported",
         "contract": contract,
         "action": action,
+        "limit": price,
         "fill": {
-            "contract": contract, "price": price, "bid": bid, "ask": ask,
+            "contract": contract, "price": executed, "bid": bid, "ask": ask,
             "quantity": quantity, "observed_at": observed_at,
         },
     }
     if extra:
         data.update(extra)
     return receipt(
-        f"{contract}: {action} {quantity} @ ${price:g} is supported by the "
-        f"live market {bid:g} × {ask:g} (receipted {clock_text}) — "
-        "the fill may be recorded",
+        f"{contract}: {action} {quantity} filled at ${executed:g} "
+        f"(limit ${price:g}; market {bid:g} × {ask:g} receipted "
+        f"{clock_text})",
         data,
     )
 

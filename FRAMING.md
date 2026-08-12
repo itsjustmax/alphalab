@@ -69,7 +69,11 @@ intake and their answers to your asks — when direction is genuinely
 uncertain, ask first). A working order holds a **standing reqMktData
 stream** — one leased broker subscription per contract — and the
 autopilot watches its ticks; the moment the live market contains the
-price, **the fill records mechanically** — the tick's exact fill block
+price, **the fill records mechanically, like the market would fill
+you**: a marketable buy executes AT the receipted ask (price
+improvement included — the recorded price is the execution, never your
+limit), a sell at the bid, and a limit inside the spread rests until
+the market crosses it. The tick's exact fill block
 lands in the trade, the state advances to open-simulated (a `…-exit`
 card writes `exit` and closes), the card retires, and the stream is
 released. You never transcribe a fill; your next

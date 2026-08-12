@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -210,7 +210,7 @@
     },
     {
       "name": "spx_gamma",
-      "description": "Latest SPX dealer gamma, strike-level, cached-honest on vendor failure. data: {gamma_v2: {gamma_centroid, regime_v2, total_net_gamma, local_net_gamma_25/_50, spot_vs_centroid}, expiration_pocket_count, collected_at}.",
+      "description": "Latest SPX dealer gamma, strike-level, cached-honest on vendor failure. data: {gamma_v2: {gamma_centroid, regime_v2, total_net_gamma, local_net_gamma_25/_50, spot_vs_centroid}, expiration_pocket_count, collected_at}. NOTE: spot_vs_centroid is in index POINTS (spot minus centroid), not percent.",
       "args": {
         "limit_strikes": "strikes to include",
         "max_age_minutes": "serve cached if fresher",

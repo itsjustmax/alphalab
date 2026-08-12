@@ -202,7 +202,8 @@ def test_a_fill_carries_exactly_its_receipt_fields():
 
 # -- the fill gate (fill_check) ----------------------------------------------
 
-def test_fill_check_supports_a_price_inside_the_live_market():
+def test_a_marketable_buy_fills_at_the_ask():
+    # Limit at the ask: executes at the ask.
     result = check_fill(FILL_ARGS, envelope(live_quote()))
     assert result["ok"] is True
     data = result["data"]
@@ -212,25 +213,47 @@ def test_fill_check_supports_a_price_inside_the_live_market():
         "price": 4.00, "bid": 3.90, "ask": 4.00, "quantity": 2,
         "observed_at": LIVE_CLOCK,
     }
-    assert data["contract"] == "NVDA 20260814 190C"
-    assert data["action"] == "buy"
-    # No confirmation machinery: the receipt is the gate, not a question.
+    assert data["action"] == "buy" and data["limit"] == 4.00
     assert "ask_card" not in data
     assert "3.9 × 4" in result["summary"]
+    # Limit ABOVE the ask: still executes AT the ask — price improvement,
+    # like the market would actually do.
+    generous = check_fill({**FILL_ARGS, "price": 6.05}, envelope(live_quote()))
+    assert generous["ok"] is True
+    assert generous["data"]["fill"]["price"] == 4.00
+    assert generous["data"]["limit"] == 6.05
 
 
-def test_fill_check_rejects_605_against_the_live_market():
-    result = check_fill({**FILL_ARGS, "price": 6.05}, envelope(live_quote()))
-    assert result["ok"] is False
-    assert "ask_card" not in result["data"]
-    assert any("3.9 × 4" in gap for gap in result["gaps"])
+def test_a_limit_inside_the_spread_rests():
+    resting = check_fill({**FILL_ARGS, "price": 3.95}, envelope(live_quote()))
+    assert resting["ok"] is False
+    assert "rests below the ask" in resting["summary"]
+
+
+def test_a_sell_mirrors_against_the_bid():
+    sold = check_fill({**FILL_ARGS, "action": "sell", "price": 3.85},
+                      envelope(live_quote()))
+    assert sold["ok"] is True
+    assert sold["data"]["fill"]["price"] == 3.90  # executed at the bid
+    resting = check_fill({**FILL_ARGS, "action": "sell", "price": 3.95},
+                         envelope(live_quote()))
+    assert resting["ok"] is False
+    assert "rests above the bid" in resting["summary"]
+
+
+def test_the_recorded_605_catch_still_holds_at_the_trade_level():
+    # The gate now fills a marketable 6.05 AT 4.00 — but a RECORDED fill
+    # claiming price 6.05 against a 3.90 × 4.00 market stays impossible.
+    case = make_case(state="open-simulated", fill=make_fill(price=6.05))
+    violations = gates.trade_violations(case)
+    assert any("sits outside its receipted" in v for v in violations)
 
 
 def test_refusals_carry_their_verdict_in_data():
     # A program-backed confirmation card extracts result.data — the refusal
     # and its reasons must travel there, or the card would go silently stale.
     refusals = [
-        check_fill({**FILL_ARGS, "price": 6.05}, envelope(live_quote())),
+        check_fill({**FILL_ARGS, "price": 3.00}, envelope(live_quote())),
         check_fill(FILL_ARGS, envelope(live_quote(observed_at="2026-08-12T14:10:00-04:00"))),
         check_fill(FILL_ARGS, {"ok": False, "error": "TWS is not running"}),
         gates.fill_check({}, now=NOW),
@@ -364,10 +387,10 @@ def test_fill_watch_warms_the_stream_when_no_ticks_exist():
 
 
 def test_fill_watch_applies_the_same_rulebook_as_fill_check():
-    outside = gates.fill_watch({**FILL_ARGS, "price": 6.05},
+    resting = gates.fill_watch({**FILL_ARGS, "price": 3.00},
                                invoke=stream_invoke([live_tick()]), now=NOW)
-    assert outside["ok"] is False
-    assert any("3.9 × 4" in gap for gap in outside["gaps"])
+    assert resting["ok"] is False
+    assert "rests below the ask" in resting["summary"]
     stale = gates.fill_watch(
         FILL_ARGS,
         invoke=stream_invoke([live_tick(quote_time="2026-08-12T14:10:00-04:00")]),
