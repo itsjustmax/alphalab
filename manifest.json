@@ -56,7 +56,8 @@
       "name": "live_quotes",
       "description": "Freshest streamed ticks for up to 10 symbols in one engine call — the watchlist's real-time lane. Quiet symbols get their streams started and one retry. data: {quotes: {SYMBOL: {bid, ask, last, close, observed_at} | null}}.",
       "args": {
-        "symbols": "list of tickers (or comma string), up to 10"
+        "symbols": "list of tickers (or comma string), up to 10",
+        "warm": "true once to start quiet symbols' streams (slow); omit for fast reads"
       },
       "command": [
         "python3",

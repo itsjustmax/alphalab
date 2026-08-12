@@ -579,10 +579,13 @@ function watchSymbols(view) {
 }
 
 function renderWatchlist(view) {
+  // Watchlist symbols always stream through the tick loop; the agent's
+  // quotes/ entries render only for contracts beyond the watchlist.
+  const symbols = watchSymbols(view);
+  const watched = new Set(symbols);
   const quoted = Object.entries(view.context)
-    .filter(([key, value]) => key.startsWith("quotes/") && value);
-  const quotedSymbols = new Set(quoted.map(([key]) => key.slice(7).toUpperCase()));
-  const symbols = watchSymbols(view).filter(s => !quotedSymbols.has(s));
+    .filter(([key, value]) => key.startsWith("quotes/") && value
+            && !watched.has(key.slice(7).toUpperCase()));
   if (!symbols.length && !quoted.length) return null;
   const section = el("section", {class: "full"});
   section.append(el("h2", {}, "Watchlist"));
