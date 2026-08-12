@@ -122,7 +122,8 @@ def capabilities(arguments):
         "paper gates (case_check; fill_check needs the quote lane)": True,
         "full engine (broker quotes, options, dealer gamma)": full,
     }
-    summary = ("full engine present — every tool is live" if full else
+    summary = ("full engine installed — its lanes answer when the broker "
+               "stack is up; a failed receipt names itself" if full else
                "inline data only — install the full stack for broker quotes, "
                "options, and dealer gamma")
     return receipt(summary, {"lanes": lanes, "full_engine": full})

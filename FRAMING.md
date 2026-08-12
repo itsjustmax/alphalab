@@ -53,10 +53,14 @@ exactly as:
                           "expiration": ..., "strike": ..., "right": ...,
                           "price": ..., "quantity": ..., "action": "buy",
                           "contract": "<display label>"},
-                 "minutes": 5, "value_path": "result.data", "into": "check"}}
+                 "minutes": 2, "value_path": "result.data", "into": "check"}}
 
-The receipt lands in the card's `check` field and the desk offers the
-Confirm buttons only while `check.verdict` is `fill-supported`. Gate
+The card is a standing paper limit: pick `price` at or inside the
+receipted market, and the gate re-offers confirmation whenever the live
+market contains it — a fast market flickering the buttons is the gate
+being honest. The receipt lands in the card's `check` field and the
+desk offers the Confirm buttons only while `check.verdict` is
+`fill-supported` and the receipt is fresh. Gate
 two is the member's click — and **the desk records a confirmed fill
 itself, at the moment of the click**, from the exact receipt the member
 saw: it copies `check.fill` into the case with `confirmed` set to the
@@ -84,8 +88,11 @@ deception.
 ## The rhythm
 
 The member's intake answers (`intake/*`) are standing constraints —
-the premium ceiling binds every case, the watchlist and focus set the
-lens. Keep one pinned `widgets/brief` Today card current: what the
+the premium ceiling (dollars per contract) binds every case, the
+watchlist and focus set the lens. On a first build, wire the programs
+and charts and let receipts arrive: an empty findings feed is honest;
+priors dressed as receipts are not — findings cite receipts that
+exist. Keep one pinned `widgets/brief` Today card current: what the
 desk is doing and what needs eyes. Curate toward ~12 widget cards and
 ~25 entries overall; overwrite stale cards instead of adding beside
 them, and write null to retire an entry that no longer serves. At a real fork — which underlying,

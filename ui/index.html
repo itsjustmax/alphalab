@@ -483,6 +483,13 @@ async function answerFill(cardKey, check, option) {
                   receipt_observed_at: check?.fill?.observed_at ?? null};
   try {
     if (option === "Confirm fill" && check?.verdict === "fill-supported") {
+      const receiptAge = (Date.now() -
+        new Date(check?.fill?.observed_at ?? 0).getTime()) / 1000;
+      if (!(receiptAge < 180)) {
+        alert("This receipt is stale — the card re-checks the market " +
+              "shortly; confirm against a fresh quote.");
+        return;
+      }
       const existing = lastView?.context?.[`cases/${caseId}`];
       if (!existing) {
         alert(`No case at cases/${caseId} — a fill needs its case first.`);
