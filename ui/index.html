@@ -788,13 +788,14 @@ function renderPositions(view) {
   const table = el("table");
   const head = el("tr");
   for (const column of ["contract", "state", "entry",
-                        "exit / result", "underlying (EOD)", "wrong if"])
+                        "exit / result", "underlying (EOD)", "invalidation"])
     head.append(el("td", {class: "key"}, column));
   table.append(head);
   for (const [key, c] of rows) {
     const line = el("tr");
     const name = el("td", {},
-      (c.contracts || []).join(" + ") || (c.fill || {}).contract || key.slice(7));
+      (c.contracts || []).map(contractLabel).join(" + ")
+        || (c.fill || {}).contract || key.slice(7));
     name.append(focusChip(key, c));
     line.append(name);
     const stateCell = el("td");
@@ -814,7 +815,8 @@ function renderPositions(view) {
     }
     line.append(el("td", {class: "val"}, result));
     const underlying = el("td", {class: "val"}, "—");
-    const symbol = String(c.contract || "").split(/\s+/)[0];
+    const symbol = contractLabel((c.contracts || [])[0]
+      || (c.fill || {}).contract || "").split(/\s+/)[0];
     if (/^[A-Z.]{1,6}$/.test(symbol)) {
       underlying.textContent = "…";
       toolData("price_summary", {symbol}, 10).then(receipt => {
@@ -1243,8 +1245,7 @@ function renderTrades(view) {
     card.append(head);
     const contracts = el("div", {class: "contracts"});
     for (const contract of spec?.contracts || [])
-      contracts.append(el("span", {}, typeof contract === "string"
-        ? contract : JSON.stringify(contract).slice(0, 60)));
+      contracts.append(el("span", {}, contractLabel(contract)));
     if (contracts.childNodes.length) card.append(contracts);
     if (spec?.thesis) {
       const line = String(spec.thesis);
@@ -1274,6 +1275,18 @@ function renderTrades(view) {
   }
   section.append(grid);
   return section;
+}
+
+function contractLabel(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const parts = [String(value.symbol || "?").toUpperCase()];
+    if (value.expiration) parts.push(String(value.expiration));
+    if (value.strike != null && value.right)
+      parts.push(`${value.strike}${String(value.right).toUpperCase()}`);
+    return parts.join(" ");
+  }
+  return String(value ?? "?");
 }
 
 function tradeStats(key, spec, view) {
@@ -1350,8 +1363,7 @@ function openTradeModal(key) {
   body.replaceChildren();
   const contracts = el("div", {class: "contracts"});
   for (const contract of spec.contracts || [])
-    contracts.append(el("span", {}, typeof contract === "string"
-      ? contract : JSON.stringify(contract).slice(0, 60)));
+    contracts.append(el("span", {}, contractLabel(contract)));
   body.append(contracts);
   body.append(el("div", {class: "section-label"}, "Thesis"));
   body.append(el("p", {}, spec.thesis || "—"));

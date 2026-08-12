@@ -23,6 +23,7 @@ a limit inside the spread rests. The tests pin all of it.
 import datetime
 import json
 import math
+import re
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
@@ -115,6 +116,44 @@ def fill_violations(fill, label="fill"):
     return violations
 
 
+_STRIKE_RIGHT = re.compile(r"(\d+(?:\.\d+)?)\s*([CP])\b", re.IGNORECASE)
+_DATEISH = re.compile(r"\b(\d{8})\b|\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
+
+
+def contracts_match(label_a, label_b):
+    """Same contract under different notations?
+
+    'NVDA 8/21 235C' and 'NVDA 20260821 235C' are one contract; labels
+    vary by author, identity must not. Symbol + strike/right + (when both
+    carry one) the month/day of expiration decide it.
+    """
+
+    a, b = str(label_a or "").upper(), str(label_b or "").upper()
+    if not a or not b:
+        return False
+    if a.split()[0] != b.split()[0]:
+        return False
+    sr_a, sr_b = _STRIKE_RIGHT.search(a), _STRIKE_RIGHT.search(b)
+    if bool(sr_a) != bool(sr_b):
+        return False
+    if sr_a and (float(sr_a.group(1)) != float(sr_b.group(1))
+                 or sr_a.group(2).upper() != sr_b.group(2).upper()):
+        return False
+
+    def month_day(text):
+        match = _DATEISH.search(text)
+        if not match:
+            return None
+        if match.group(1):
+            return int(match.group(1)[4:6]), int(match.group(1)[6:8])
+        return int(match.group(2)), int(match.group(3))
+
+    md_a, md_b = month_day(a), month_day(b)
+    if md_a and md_b and md_a != md_b:
+        return False
+    return True
+
+
 def trade_violations(trade):
     """Every way one trades/<id> value breaks the trade contract, by name."""
 
@@ -186,7 +225,8 @@ def trade_violations(trade):
         violations.extend(fill_violations(block, label=label))
         filled_contract = str((block or {}).get("contract") or "").strip() \
             if isinstance(block, dict) else ""
-        if filled_contract and contracts and filled_contract not in contracts:
+        if filled_contract and contracts and not any(
+                contracts_match(filled_contract, item) for item in contracts):
             violations.append(
                 f"the {label}'s contract {filled_contract!r} is not one of "
                 "this trade's contracts")

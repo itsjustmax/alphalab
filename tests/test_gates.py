@@ -668,3 +668,18 @@ def test_desk_templates_extend_the_builtins():
                                         "body": {"$": "body"}}}})
     assert violations == []
     assert target == "widgets/note-x" and cell["body"] == "hello"
+
+
+def test_contract_labels_match_across_notations():
+    assert gates.contracts_match("NVDA 8/21 235C", "NVDA 20260821 235C")
+    assert gates.contracts_match("NVDA 20260821 235C", "NVDA 20260821 235C")
+    assert not gates.contracts_match("NVDA 8/21 240C", "NVDA 20260821 235C")
+    assert not gates.contracts_match("AMD 8/21 235C", "NVDA 20260821 235C")
+    assert not gates.contracts_match("NVDA 8/14 235C", "NVDA 20260821 235C")
+    assert gates.contracts_match("NVDA shares", "NVDA shares")
+
+
+def test_a_fill_under_another_notation_belongs_to_its_trade():
+    fill = make_fill(contract="NVDA 8/14 190C")
+    case = make_case(state="open-simulated", fill=fill)
+    assert gates.trade_violations(case) == []
