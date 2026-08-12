@@ -64,9 +64,7 @@ def available() -> bool:
     )
 
 
-def invoke(operation, arguments, timeout=110):
-    """Run one full-engine operation; always answers a dict, never raises."""
-
+def _run_adapter(payload, timeout=110):
     bound = binding()
     if not bound:
         return {"ok": False,
@@ -81,7 +79,7 @@ def invoke(operation, arguments, timeout=110):
     try:
         result = subprocess.run(
             [bound["python"], adapter],
-            input=json.dumps({"operation": operation, "arguments": arguments}),
+            input=json.dumps(payload),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -92,9 +90,34 @@ def invoke(operation, arguments, timeout=110):
     if result.returncode != 0:
         return {"ok": False, "error": result.stderr.strip()[:1500]}
     try:
-        return normalize(json.loads(result.stdout))
+        return json.loads(result.stdout)
     except json.JSONDecodeError:
         return {"ok": False, "error": "the engine answered with non-JSON"}
+
+
+def invoke(operation, arguments, timeout=110):
+    """Run one full-engine operation; always answers a dict, never raises."""
+
+    return normalize(_run_adapter(
+        {"operation": operation, "arguments": arguments}, timeout=timeout))
+
+
+def invoke_many(operations, timeout=110):
+    """Run several operations in ONE engine start-up; list of receipts.
+
+    `operations` is a list of (operation, arguments) pairs. The engine
+    import dominates a call's latency, so batching is how a client reads
+    many live quotes at once.
+    """
+
+    reply = _run_adapter(
+        {"operations": [{"operation": op, "arguments": args}
+                        for op, args in operations]}, timeout=timeout)
+    if not isinstance(reply, dict) or not isinstance(reply.get("receipts"), list):
+        error = (reply or {}).get("error") or "the engine answered no batch"
+        return [{"ok": False, "error": str(error)[:300]}
+                for _ in operations]
+    return [normalize(receipt) for receipt in reply["receipts"]]
 
 
 def normalize(reply):

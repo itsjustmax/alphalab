@@ -141,6 +141,7 @@ OPERATIONS = {
     "fill_watch": gates.fill_watch,
     "live_quote": gates.live_quote,
     "web_fetch": web.web_fetch,
+    "live_quotes": gates.live_quotes,
 }
 
 

@@ -393,34 +393,118 @@ def fill_check(arguments, fetch_quote=None, now=None):
     return _gate_quote(parsed, quote, now)
 
 
-def _stream_tick(arguments, invoke, owner="alphalab-desk"):
-    """Ensure a reqMktData stream for the contract; answer its freshest tick.
-
-    One leased broker connection per contract, held by the engine's
-    managed worker — no snapshot lease cycle per read. Returns
-    (tick, stream_info, gaps); tick is None when no market answered.
-    """
-
-    request = _contract_request(arguments)
-    started = invoke("ibkr.market_stream",
-                     {**request, "action": "start", "owner": owner})
-    stream_info = {}
-    if isinstance(started, dict):
-        data = started.get("data") or {}
-        stream_info = {"stream_id": data.get("stream_id"),
-                       "started_ok": bool(started.get("ok"))}
+def _latest_rows(invoke, request):
     latest = invoke("ibkr.market_stream",
                     {**request, "action": "latest", "limit": 1})
     if not isinstance(latest, dict) or latest.get("ok") is False:
         detail = (latest or {}).get("error") or (latest or {}).get("summary") \
             or "unnamed failure"
-        return None, stream_info, [f"the stream lane failed: {str(detail)[:300]}"]
+        return None, [f"the stream lane failed: {str(detail)[:300]}"]
     rows = ((latest.get("data") or {}).get("rows")) or []
+    return rows, []
+
+
+def _stream_tick(arguments, invoke, owner="alphalab-desk"):
+    """Read the contract's freshest tick; start its stream only if needed.
+
+    Latest-first keeps the steady state to ONE engine call per read; the
+    start (idempotent, one leased broker connection per contract, held by
+    the engine's managed worker) happens only when no ticks exist yet.
+    Returns (tick, stream_info, gaps); tick is None when no market answered.
+    """
+
+    request = _contract_request(arguments)
+    rows, gaps = _latest_rows(invoke, request)
+    stream_info = {}
+    if not rows:
+        started = invoke("ibkr.market_stream",
+                         {**request, "action": "start", "owner": owner})
+        if isinstance(started, dict):
+            data = started.get("data") or {}
+            stream_info = {"stream_id": data.get("stream_id"),
+                           "started_ok": bool(started.get("ok"))}
+        rows, gaps = _latest_rows(invoke, request)
+    if rows is None:
+        return None, stream_info, gaps
     if not rows or not isinstance(rows[0], dict):
         return None, stream_info, [
             "the stream has no persisted ticks yet — the subscription may "
             "still be warming, or the market is not printing"]
     return rows[0], stream_info, []
+
+
+def live_quotes(arguments, invoke_batch=None):
+    """Freshest ticks for several symbols in ONE engine start-up.
+
+    The engine import dominates a read's latency; this is the watchlist's
+    real-time lane. Symbols without ticks get their streams started and
+    one retry; still-quiet symbols answer null, named in gaps.
+    """
+
+    raw = arguments.get("symbols")
+    if isinstance(raw, str):
+        raw = raw.replace(",", " ").split()
+    symbols = [str(item).strip().upper() for item in (raw or [])
+               if str(item).strip()][:10]
+    if not symbols:
+        return receipt("live_quotes needs symbols", ok=False,
+                       gaps=["no symbols given"])
+    if invoke_batch is None:
+        import bridge
+
+        if not bridge.available():
+            return receipt("no live quote lane on this machine", ok=False,
+                           gaps=["the full engine is not installed"])
+        invoke_batch = bridge.invoke_many
+
+    def request(symbol):
+        return {"symbol": symbol, "action": "latest", "limit": 1}
+
+    replies = invoke_batch([("ibkr.market_stream", request(s))
+                            for s in symbols])
+    quotes = {}
+    quiet = []
+    for symbol, reply in zip(symbols, replies):
+        rows = (((reply or {}).get("data") or {}).get("rows")) or []
+        if rows and isinstance(rows[0], dict):
+            tick = rows[0]
+            quotes[symbol] = {
+                "bid": tick.get("bid"), "ask": tick.get("ask"),
+                "last": tick.get("last"), "close": tick.get("close"),
+                "observed_at": tick.get("quote_time") or tick.get("observed_at"),
+            }
+        else:
+            quotes[symbol] = None
+            quiet.append(symbol)
+    gaps = []
+    if quiet and not arguments.get("warm"):
+        gaps.extend(f"{symbol}: no tick yet (pass warm=true once to start "
+                    "its stream)" for symbol in quiet)
+        quiet = []
+    if quiet:
+        starts = [("ibkr.market_stream",
+                   {"symbol": s, "action": "start", "owner": "alphalab-desk"})
+                  for s in quiet]
+        retries = [("ibkr.market_stream", request(s)) for s in quiet]
+        batched = invoke_batch(starts + retries)
+        for symbol, reply in zip(quiet, batched[len(starts):]):
+            rows = (((reply or {}).get("data") or {}).get("rows")) or []
+            if rows and isinstance(rows[0], dict):
+                tick = rows[0]
+                quotes[symbol] = {
+                    "bid": tick.get("bid"), "ask": tick.get("ask"),
+                    "last": tick.get("last"), "close": tick.get("close"),
+                    "observed_at": tick.get("quote_time")
+                    or tick.get("observed_at"),
+                }
+            else:
+                gaps.append(f"{symbol}: stream warming — no tick yet")
+    live = sum(1 for value in quotes.values() if value)
+    return receipt(
+        f"live ticks for {live}/{len(symbols)} symbol(s)",
+        {"quotes": quotes},
+        gaps=gaps,
+    )
 
 
 def fill_watch(arguments, invoke=None, now=None):

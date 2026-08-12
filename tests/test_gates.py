@@ -337,11 +337,29 @@ def live_tick(**overrides):
 
 
 def test_fill_watch_supports_a_price_inside_the_streamed_tick():
+    # Steady state: ticks already flow, so no start call happens at all.
     result = gates.fill_watch(FILL_ARGS, invoke=stream_invoke([live_tick()]),
                               now=NOW)
     assert result["ok"] is True
     assert result["data"]["verdict"] == "fill-supported"
     assert result["data"]["fill"]["observed_at"] == LIVE_CLOCK
+    assert result["data"]["stream"] == {}
+
+
+def test_fill_watch_warms_the_stream_when_no_ticks_exist():
+    calls = []
+
+    def invoke(operation, arguments):
+        calls.append(arguments.get("action"))
+        if arguments.get("action") == "start":
+            return {"ok": True, "data": {"stream_id": "s-1"}}
+        # First latest: quiet; after the start: a live tick.
+        rows = [live_tick()] if "start" in calls else []
+        return {"ok": True, "data": {"rows": rows}}
+
+    result = gates.fill_watch(FILL_ARGS, invoke=invoke, now=NOW)
+    assert calls == ["latest", "start", "latest"]
+    assert result["ok"] is True
     assert result["data"]["stream"]["stream_id"] == "s-1"
 
 
@@ -371,7 +389,28 @@ def test_live_quote_answers_the_freshest_tick_with_its_clock():
     quote = result["data"]["quote"]
     assert quote["bid"] == 3.90 and quote["ask"] == 4.00
     assert quote["observed_at"] == LIVE_CLOCK
-    assert result["data"]["stream"]["stream_id"] == "s-1"
+    assert result["data"]["stream"] == {}
+
+
+def test_live_quotes_batches_and_names_quiet_symbols():
+    def invoke_batch(operations):
+        replies = []
+        for operation, arguments in operations:
+            if arguments.get("action") == "start":
+                replies.append({"ok": True, "data": {"stream_id": "s"}})
+            elif arguments["symbol"] == "NVDA":
+                replies.append({"ok": True, "data": {"rows": [live_tick()]}})
+            else:
+                replies.append({"ok": True, "data": {"rows": []}})
+        return replies
+
+    result = gates.live_quotes({"symbols": ["NVDA", "SPX"], "warm": True},
+                               invoke_batch=invoke_batch)
+    assert result["ok"] is True
+    assert result["data"]["quotes"]["NVDA"]["last"] == 3.95
+    assert result["data"]["quotes"]["NVDA"]["close"] == 3.1
+    assert result["data"]["quotes"]["SPX"] is None
+    assert any("SPX: stream warming" in gap for gap in result["gaps"])
 
 
 def test_the_bridge_lifts_stream_rows_to_data():

@@ -104,13 +104,15 @@ def main():
     from pathlib import Path
 
     request = json.load(sys.stdin)
-    operation = request.get("operation")
-    refusal = screen(operation)
-    if refusal:
-        print(json.dumps({"ok": False,
-                          "summary": f"refused: {refusal}",
-                          "gaps": [refusal]}))
-        return
+    # One spawn, one or many operations: batching exists so a client can
+    # read several live quotes in a single engine start-up.
+    batch = request.get("operations")
+    calls = ([{"operation": item.get("operation"),
+               "arguments": item.get("arguments") or {}}
+              for item in batch] if isinstance(batch, list)
+             else [{"operation": request.get("operation"),
+                    "arguments": request.get("arguments") or {}}])
+
     from alphalab_agents.api.operations import run_api_operation
     from alphalab_agents.paths import resolve_alphalab_home
 
@@ -119,21 +121,32 @@ def main():
     if raw_home:
         home = resolve_alphalab_home(Path(raw_home).resolve(),
                                      allow_internal=True)
-    # The engine may chat on stdout; only the receipt may reach ours.
-    with contextlib.redirect_stdout(io.StringIO()):
-        receipt = run_api_operation(
-            str(operation),
-            dict(request.get("arguments") or {}),
-            home=home,
-            surface="agent-runtime",
-        )
     roots = (
         (str(home.root) if home is not None else raw_home, "~ALPHALAB_HOME"),
         (os.environ.get("ALPHALAB_PACKAGE_SRC", ""), "~ENGINE"),
         (os.path.expanduser("~"), "~"),
     )
-    print(json.dumps(redact(bound(receipt), roots),
-                     ensure_ascii=False, default=str))
+    receipts = []
+    for call in calls:
+        refusal = screen(call["operation"])
+        if refusal:
+            receipts.append({"ok": False, "summary": f"refused: {refusal}",
+                             "gaps": [refusal]})
+            continue
+        # The engine may chat on stdout; only receipts may reach ours.
+        with contextlib.redirect_stdout(io.StringIO()):
+            receipt = run_api_operation(
+                str(call["operation"]),
+                dict(call["arguments"]),
+                home=home,
+                surface="agent-runtime",
+            )
+        receipts.append(redact(bound(receipt), roots))
+    if isinstance(batch, list):
+        print(json.dumps({"ok": True, "receipts": receipts},
+                         ensure_ascii=False, default=str))
+    else:
+        print(json.dumps(receipts[0], ensure_ascii=False, default=str))
 
 
 if __name__ == "__main__":

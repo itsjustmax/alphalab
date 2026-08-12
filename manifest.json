@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -50,6 +50,18 @@
         "python3",
         "tools/run.py",
         "daily_bars"
+      ]
+    },
+    {
+      "name": "live_quotes",
+      "description": "Freshest streamed ticks for up to 10 symbols in one engine call — the watchlist's real-time lane. Quiet symbols get their streams started and one retry. data: {quotes: {SYMBOL: {bid, ask, last, close, observed_at} | null}}.",
+      "args": {
+        "symbols": "list of tickers (or comma string), up to 10"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "live_quotes"
       ]
     },
     {

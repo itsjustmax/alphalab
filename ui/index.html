@@ -234,6 +234,9 @@
     <input type="text" id="focus-line" autocomplete="off"
            placeholder="Ask about this cell…">
   </form>
+  <p class="hint">Enter asks in place (scoped, nothing changes on the desk).
+    <button id="focus-to-desk" type="button" class="details-btn">send to
+    the desk</button> turns your text into feedback the agent acts on.</p>
 </aside>
 
 <section id="intake" hidden>
@@ -385,6 +388,27 @@ function focusPrompt(question) {
   parts.push(`Member: ${question}`, "Desk:");
   return parts.join("\n");
 }
+document.getElementById("focus-to-desk").addEventListener("click",
+    async () => {
+  const box = document.getElementById("focus-line");
+  const text = box.value.trim();
+  if (!text || !focusKey) return;
+  box.value = "";
+  try {
+    await api("POST", `/environments/${envId}/say`,
+      {text: `About ${focusKey}: ${text}`});
+    await markMemberTurn();
+    const model = chosenModel("ask");
+    await api("POST", `/environments/${envId}/build`, model ? {model} : {});
+    turnActive = true;
+    turnStarted = Date.now();
+    updateLiveness();
+    focusThread.push({who: "desk",
+      text: "→ sent to the desk — the agent is taking a turn on it",
+      busy: true});
+    renderFocusLog();
+  } catch (error) { alert(error.message); }
+});
 document.getElementById("focus-close").addEventListener("click", () =>
   document.getElementById("focus-drawer").classList.remove("open"));
 document.getElementById("focus-form").addEventListener("submit", async event => {
@@ -592,28 +616,15 @@ function renderWatchlist(view) {
   return section.appendChild(strip), section;
 }
 
-// A watchlist chip streams: the standing reqMktData subscription keeps
-// it fresh; end-of-day closes are the honest fallback when the broker
-// lane is down. Chips re-pull every 20 seconds in place.
+// The watchlist is real-time: one batched engine read per cycle pulls
+// every symbol's freshest persisted tick, self-pacing as fast as the
+// pipe allows (~1/second). Change is measured from the last close.
+// EOD closes are the honest fallback when the broker lane is down.
 async function fillTick(chip, symbol) {
-  const live = await toolData("live_quote", {symbol}, 0.32);
-  if (live?.ok && live.data?.quote?.last != null) {
-    const quote = live.data.quote;
-    const reference = quote.close;
-    const pct = reference ? 100 * (quote.last - reference) / reference : null;
-    chip.replaceChildren(
-      el("b", {}, symbol + " "),
-      document.createTextNode(`${quote.last} `),
-      el("span", {class: (pct ?? 0) >= 0 ? "up" : "down"},
-        pct === null ? "" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`));
-    chip.title = `streaming ${quote.bid} × ${quote.ask} · as of ` +
-      `${quote.observed_at}`;
-    return;
-  }
   const eod = await toolData("price_summary", {symbol}, 10);
   if (!eod?.ok) {
     chip.textContent = `${symbol} — unavailable`;
-    chip.title = [...(live?.gaps || []), ...(eod?.gaps || [])].join("; ");
+    chip.title = (eod?.gaps || []).join("; ");
     return;
   }
   const d = eod.data;
@@ -624,10 +635,67 @@ async function fillTick(chip, symbol) {
       `${d.change_1d_pct >= 0 ? "+" : ""}${d.change_1d_pct}%`));
   chip.title = `EOD close (stream unavailable) · ${eod.summary}`;
 }
-setInterval(() => {
-  for (const chip of document.querySelectorAll(".tick[data-symbol]"))
-    fillTick(chip, chip.dataset.symbol);
-}, 20000);
+function applyTick(chip, quote) {
+  if (!quote || quote.last == null) return false;
+  const close = Number(quote.close);
+  const pct = close ? 100 * (quote.last - close) / close : null;
+  chip.replaceChildren(
+    el("b", {}, chip.dataset.symbol + " "),
+    document.createTextNode(`${quote.last} `),
+    el("span", {class: (pct ?? 0) >= 0 ? "up" : "down"},
+      pct === null ? "" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% vs close`));
+  chip.title = `streaming ${quote.bid} × ${quote.ask} · as of ` +
+    `${quote.observed_at}`;
+  return true;
+}
+let tickLoopStarted = false;
+async function tickLoop() {
+  if (tickLoopStarted) return;
+  tickLoopStarted = true;
+  const fallbackDone = new Set();
+  const quietUntil = {};   // symbols with no ticks re-check once a minute,
+                           // not every cycle — a quiet lane must not slow
+                           // the live ones down
+  while (true) {
+    const chips = [...document.querySelectorAll(".tick[data-symbol]")];
+    if (!chips.length) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      continue;
+    }
+    const now = Date.now();
+    const symbols = [...new Set(chips.map(chip => chip.dataset.symbol))]
+      .filter(symbol => (quietUntil[symbol] || 0) <= now);
+    let quotes = {};
+    if (symbols.length) {
+      try {
+        // The first cycle warms quiet streams (slow, once); after that
+        // the loop is a single fast batched read.
+        const warm = !tickLoop.warmed;
+        tickLoop.warmed = true;
+        const reply = await api("POST",
+          `/environments/${envId}/tools/live_quotes`,
+          {args: {symbols, warm}});
+        quotes = reply.result?.data?.quotes || {};
+      } catch (error) { /* the loop keeps its own pace */ }
+    }
+    for (const chip of chips) {
+      const symbol = chip.dataset.symbol;
+      if (!(symbol in quotes)) continue;
+      if (applyTick(chip, quotes[symbol])) {
+        delete quietUntil[symbol];
+      } else {
+        quietUntil[symbol] = Date.now() + 60_000;
+        if (!fallbackDone.has(symbol)) {
+          fallbackDone.add(symbol);
+          fillTick(chip, symbol);
+        }
+      }
+    }
+    await new Promise(resolve =>
+      setTimeout(resolve, symbols.length ? 350 : 2000));
+  }
+}
+tickLoop();
 
 function renderPositions(view) {
   const rows = Object.entries(view.context).filter(([key, c]) =>
@@ -921,6 +989,7 @@ function renderWidgets(view) {
       }
       if (spec.question) card.append(el("p", {}, spec.question));
       card.append(row);
+      card.append(ownWords(answerKey));
     } else if (spec.kind === "ask") {
       card.style.borderColor = "color-mix(in srgb, CanvasText 45%, transparent)";
       card.append(el("p", {}, spec.question || ""));
@@ -936,6 +1005,7 @@ function renderWidgets(view) {
           row.append(pick);
         }
         card.append(row);
+        card.append(ownWords(answerKey, answerAsk));
       } else {
         const form = el("form");
         const input = el("input", {type: "text", placeholder: "your answer…"});
@@ -1051,6 +1121,24 @@ function engineViolations(key, spec) {
 }
 
 
+// Options never fit everyone: every choice offers your own words too.
+function ownWords(answerKey, submit) {
+  const form = el("form", {style: "margin-top:.45rem"});
+  const input = el("input", {type: "text",
+    placeholder: "or answer in your own words…"});
+  form.append(input);
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    if (submit) submit(answerKey, text);
+    else api("POST", `/environments/${envId}/context`,
+             {key: answerKey, value: text}).then(refresh);
+  });
+  return form;
+}
+
 function renderTrades(view) {
   const section = el("section", {class: "full"});
   section.append(el("h2", {}, "Trades"));
@@ -1086,10 +1174,17 @@ function renderTrades(view) {
       card.append(el("p", {class: "violation"},
         `⚠ ${engine.length} gate violation(s) — details inside`));
     }
+    const buttons = el("div", {style: "display:flex;gap:.45rem"});
     const details = el("button", {class: "details-btn", type: "button"},
                        "Details");
     details.addEventListener("click", () => openTradeModal(key));
-    card.append(details);
+    const talk = el("button", {class: "details-btn primary", type: "button"});
+    talk.innerHTML = ((window.Manifold && Manifold.mark) || "◈") +
+      " AlphaLab";
+    talk.title = "talk to the desk about this trade — questions or feedback";
+    talk.addEventListener("click", () => openFocus(key));
+    buttons.append(details, talk);
+    card.append(buttons);
     grid.append(card);
   }
   section.append(grid);
