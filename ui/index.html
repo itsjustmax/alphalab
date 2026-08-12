@@ -93,6 +93,10 @@
   .tick .up { color: #4fb98a; } .tick .down { color: #d96a6a; }
   .tick.broken { border-color: #d96a6a; color: #d96a6a; }
   .ok-line { color: #4fb98a; font-size: .85rem; margin: .3rem 0 0; }
+  select.model-select { padding: .45rem .5rem; border-radius: 8px;
+    border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+    background: transparent; color: inherit; font-size: .85rem;
+    max-width: 14rem; }
   pre.data-body { font-size: .72rem; max-height: 14rem; overflow: auto;
                   white-space: pre-wrap; word-break: break-word;
                   margin: .3rem 0 0; opacity: .85; }
@@ -178,6 +182,34 @@ function toolData(tool, args, ttlMinutes) {
   toolCache.set(cacheKey, {at: Date.now(), value});
   return value;
 }
+
+// Model routing (platform primitive): every submit control carries a
+// selector — the member picks which model runs that task. A deep model
+// for building the desk, an inexpensive one for a quick question.
+let modelCatalog = [{id: "sonnet", label: "Claude Sonnet"}];
+const modelsReady = api("GET", "/models")
+  .then(list => { if (Array.isArray(list) && list.length) modelCatalog = list; })
+  .catch(() => {});
+function chosenModel(scope) {
+  return localStorage.getItem(`alphalab-model-${scope}`) || modelCatalog[0].id;
+}
+function modelSelect(scope) {
+  const select = el("select", {class: "model-select",
+    title: "which model runs this task"});
+  const stored = chosenModel(scope);
+  for (const model of modelCatalog) {
+    const option = el("option", {value: model.id}, model.label);
+    if (model.id === stored) option.setAttribute("selected", "");
+    select.append(option);
+  }
+  select.addEventListener("change", () =>
+    localStorage.setItem(`alphalab-model-${scope}`, select.value));
+  return select;
+}
+modelsReady.then(() => {
+  const form = document.getElementById("composer");
+  form.insertBefore(modelSelect("ask"), form.querySelector("button"));
+});
 
 let you = "";
 let lastRendered = "";
@@ -463,7 +495,8 @@ function renderWorkings(view) {
 
 async function answerAsk(answerKey, value) {
   await api("POST", `/environments/${envId}/context`, {key: answerKey, value});
-  await api("POST", `/environments/${envId}/build`);
+  await api("POST", `/environments/${envId}/build`,
+    {model: chosenModel("ask")});
   turnActive = true;
   turnStarted = Date.now();
   updateLiveness();
@@ -527,7 +560,10 @@ function renderIntake(view) {
     }
   }
   const button = el("button", {style: "margin-top:.6rem"}, "Build the desk");
-  form.append(button);
+  const row = el("div", {style: "display:flex;gap:.5rem;align-items:center"});
+  row.append(button);
+  modelsReady.then(() => row.append(modelSelect("build")));
+  form.append(row);
   form.addEventListener("submit", async event => {
     event.preventDefault();
     if (building) return;
@@ -538,7 +574,8 @@ function renderIntake(view) {
       if (value) await api("POST", `/environments/${envId}/context`,
         {key: "intake/" + q.key, value});
     }
-    await api("POST", `/environments/${envId}/build`);
+    await api("POST", `/environments/${envId}/build`,
+      {model: chosenModel("build")});
     turnActive = true;
     turnStarted = Date.now();
     updateLiveness();
@@ -1201,7 +1238,8 @@ document.getElementById("composer").addEventListener("submit", async event => {
   if (!line) return;
   try {
     await api("POST", `/environments/${envId}/say`, {text: line});
-    await api("POST", `/environments/${envId}/build`);
+    await api("POST", `/environments/${envId}/build`,
+      {model: chosenModel("ask")});
     turnActive = true;
     turnStarted = Date.now();
     updateLiveness();

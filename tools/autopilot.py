@@ -192,12 +192,14 @@ def decide(context, state, now, budget=DEFAULT_BUDGET):
 
 
 class Pilot:
-    def __init__(self, url, token, environment, budget, state_path):
+    def __init__(self, url, token, environment, budget, state_path,
+                 model=None):
         self.url = url.rstrip("/")
         self.token = token
         self.environment = environment
         self.budget = budget
         self.state_path = state_path
+        self.model = model  # scheduled turns default to an inexpensive mind
         self.state = self._load()
 
     def _load(self):
@@ -291,7 +293,8 @@ class Pilot:
         self.record_orders(context, now)
         action, reason = decide(context, self.state, now, self.budget)
         if action == "build":
-            self._api("POST", f"/environments/{self.environment}/build", {})
+            self._api("POST", f"/environments/{self.environment}/build",
+                      {"model": self.model} if self.model else {})
             self.state["last_turn"] = now.isoformat(timespec="seconds")
             self.state["builds_today"] = self.state.get("builds_today", 0) + 1
             self.state["seen_answers"] = sorted(
@@ -318,11 +321,13 @@ def main():
     parser.add_argument("--budget", type=int, default=DEFAULT_BUDGET)
     parser.add_argument("--interval", type=int, default=30)
     parser.add_argument("--state", default=None)
+    parser.add_argument("--model", default="sonnet",
+                        help="model id for scheduled turns (see GET /models)")
     arguments = parser.parse_args()
     state_path = arguments.state or os.path.expanduser(
         f"~/.alphalab-autopilot/{arguments.environment}.json")
     pilot = Pilot(arguments.url, arguments.token, arguments.environment,
-                  arguments.budget, state_path)
+                  arguments.budget, state_path, model=arguments.model)
     last_reason = None
     print(f"[{utc_now():%H:%M:%S}] autopilot on {arguments.environment} "
           f"(budget {arguments.budget}/day, min gap {MIN_GAP_SECONDS // 60}m)",

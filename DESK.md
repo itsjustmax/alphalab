@@ -63,6 +63,13 @@ decisions: direction, risk, what to pursue or drop.
 loop's keys: the agent schedules itself with the first two; the
 autopilot reports its last action in the third.
 
+Every submit control carries a model selector (the platform's model
+router, GET /models): the member picks which model runs that task — a
+deep one to build the desk, an inexpensive one for a quick question.
+The autopilot's scheduled turns default to sonnet (--model). Register
+more models in ~/.manifold/models.json — any terminal-invocable
+command.
+
 Cases render from `cases/<id>` directly (they are not widgets): state
 badge, thesis, invalidation, evidence, and the fill with its receipted
 market, clock, and confirmation. Gate verdicts come from `case_check`
