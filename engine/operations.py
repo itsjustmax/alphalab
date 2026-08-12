@@ -124,8 +124,9 @@ def capabilities(arguments):
     }
     summary = ("full engine installed — its lanes answer when the broker "
                "stack is up; a failed receipt names itself" if full else
-               "inline data only — install the full stack for broker quotes, "
-               "options, and dealer gamma")
+               "inline data only — light the full engine (broker quotes, "
+               "live streams, options, dealer gamma) with: "
+               "python3 tools/install_engine.py")
     return receipt(summary, {"lanes": lanes, "full_engine": full})
 
 

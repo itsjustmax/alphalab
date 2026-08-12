@@ -272,8 +272,8 @@ def test_a_failed_receipt_offers_no_confirmation():
 
 
 def test_without_the_engine_no_fill_can_be_verified(monkeypatch):
+    monkeypatch.setenv("ALPHALAB_ENGINE_CONFIG", "/nonexistent/engine.json")
     monkeypatch.setenv("ALPHALAB_AGENTS_REPO", "/nonexistent")
-    monkeypatch.setenv("ALPHALAB_BRIDGE_REPO", "/nonexistent")
     result = gates.fill_check(FILL_ARGS, now=NOW)
     assert result["ok"] is False
     assert any(
@@ -420,3 +420,44 @@ def test_the_bridge_normalizes_the_native_envelope_too():
     normalized = bridge.normalize(dict(native))
     assert normalized["data"]["quote"]["ask"] == 4.0
     assert normalized["data"]["rows"] == [{"bid": 3.9}]
+
+
+def test_the_binding_resolves_config_then_legacy_env(tmp_path, monkeypatch):
+    import bridge
+
+    config = tmp_path / "engine.json"
+    config.write_text(json.dumps({"python": "/somewhere/python",
+                                  "package_src": "/somewhere/src",
+                                  "home": "/somewhere/home"}))
+    monkeypatch.setenv("ALPHALAB_ENGINE_CONFIG", str(config))
+    monkeypatch.delenv("ALPHALAB_AGENTS_REPO", raising=False)
+    bound = bridge.binding()
+    assert bound["python"] == "/somewhere/python"
+    # No config file: the legacy env pair still binds.
+    monkeypatch.setenv("ALPHALAB_ENGINE_CONFIG", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("ALPHALAB_AGENTS_REPO", "/repo")
+    monkeypatch.setenv("ALPHALAB_HOME", "/repo-home")
+    bound = bridge.binding()
+    assert bound["python"] == "/repo/.venv/bin/python"
+    assert bound["home"] == "/repo-home"
+    # Nothing at all: no binding, and available() says so.
+    monkeypatch.delenv("ALPHALAB_AGENTS_REPO", raising=False)
+    assert bridge.binding() is None
+    assert bridge.available() is False
+
+
+def test_the_adapter_redacts_local_paths():
+    import adapter
+
+    roots = (("/Users/someone/Alphalab/home", "~ALPHALAB_HOME"),
+             ("/Users/someone/engine/src", "~ENGINE"),
+             ("/Users/someone", "~"))
+    receipt = {
+        "summary": "failed reading /Users/someone/Alphalab/home/cache.db",
+        "gaps": ["traceback at /Users/someone/engine/src/alphalab/x.py",
+                 "wrote /Users/someone/notes.txt"],
+    }
+    scrubbed = adapter.redact(receipt, roots)
+    assert scrubbed["summary"] == "failed reading ~ALPHALAB_HOME/cache.db"
+    assert scrubbed["gaps"][0] == "traceback at ~ENGINE/alphalab/x.py"
+    assert scrubbed["gaps"][1] == "wrote ~/notes.txt"

@@ -49,6 +49,26 @@ def screen(operation):
     return None
 
 
+def redact(value, roots):
+    """Scrub local filesystem roots out of receipt text.
+
+    Engine errors love to quote absolute paths; the shared board is not
+    the place for them. Longest root first so nested paths scrub clean.
+    """
+
+    replacements = [(root, alias) for root, alias in roots if root]
+    replacements.sort(key=lambda pair: len(pair[0]), reverse=True)
+    if isinstance(value, str):
+        for root, alias in replacements:
+            value = value.replace(root, alias)
+        return value
+    if isinstance(value, list):
+        return [redact(item, roots) for item in value]
+    if isinstance(value, dict):
+        return {key: redact(item, roots) for key, item in value.items()}
+    return value
+
+
 def bound(receipt):
     """Cap rows and total size so a receipt always fits an entry, honestly."""
 
@@ -107,7 +127,13 @@ def main():
             home=home,
             surface="agent-runtime",
         )
-    print(json.dumps(bound(receipt), ensure_ascii=False, default=str))
+    roots = (
+        (str(home.root) if home is not None else raw_home, "~ALPHALAB_HOME"),
+        (os.environ.get("ALPHALAB_PACKAGE_SRC", ""), "~ENGINE"),
+        (os.path.expanduser("~"), "~"),
+    )
+    print(json.dumps(redact(bound(receipt), roots),
+                     ensure_ascii=False, default=str))
 
 
 if __name__ == "__main__":
