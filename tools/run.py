@@ -24,9 +24,23 @@ engine_home = os.environ.get(
 sys.path.insert(0, os.path.abspath(engine_home))
 
 INLINE = {"daily_bars", "price_summary", "capabilities", "case_check", "fill_check"}
+
+# Manifest tool names alias their engine operations, so a direct caller
+# using either name reaches the same place (agents tripped on this).
+ALIASES = {
+    "quote_snapshot": "ibkr.quote.snapshot",
+    "options_chain": "options.chain.snapshot",
+    "spx_gamma": "spx.gamma.latest",
+    "market_context": "market.context",
+    "short_volume": "market.short_volume",
+    "implied_move": "market.implied_move",
+    "symbol_research": "market.symbol.research",
+    "system_health": "system.health",
+}
+
 if operation in INLINE:
     import operations
     print(json.dumps(operations.run(operation, arguments)))
 else:
     import bridge
-    print(json.dumps(bridge.invoke(operation, arguments)))
+    print(json.dumps(bridge.invoke(ALIASES.get(operation, operation), arguments)))
