@@ -105,6 +105,36 @@ def is_order_card(key, card):
             and card.get("kind") == "order")
 
 
+def stream_matches_order(contract_key, args):
+    """Does an active stream's contract key belong to this order's contract?
+
+    Keys look like IBKR:OPT:NVDA:20260821:230:C:100:SMART:USD or
+    IBKR:STK:NVDA:SMART:USD. Pure, pinned by tests.
+    """
+
+    tokens = str(contract_key or "").split(":")
+    if len(tokens) < 3:
+        return False
+    sec_type = str(args.get("sec_type") or "STK").upper()
+    symbol = str(args.get("symbol") or "").upper()
+    if tokens[1] != sec_type or tokens[2] != symbol:
+        return False
+    if sec_type != "OPT":
+        return True
+
+    def norm(value):
+        try:
+            return f"{float(value):g}"
+        except (TypeError, ValueError):
+            return str(value).upper()
+
+    expected = {str(args.get("expiration") or ""),
+                norm(args.get("strike")),
+                str(args.get("right") or "").upper()}
+    present = set(tokens) | {norm(token) for token in tokens}
+    return expected <= present
+
+
 def order_recording(card_key, context, check, now):
     """The writes one supporting check earns — from a card's own program
     or a live fill_watch tick; the rules are identical either way."""
@@ -316,6 +346,50 @@ class Pilot:
         except Exception:
             pass
 
+    def sweep_streams(self, context):
+        """Release desk-owned streams no working order holds.
+
+        A fill releases its stream on recording; this catches the other
+        exit — an order cancelled by writing null on its card — so no
+        subscription (or its client-id lease) outlives its purpose.
+        """
+
+        armed = [((card.get("refresh") or {}).get("args") or {})
+                 for key, card in (context or {}).items()
+                 if is_order_card(key, card)]
+        try:
+            reply = self._api(
+                "POST", f"/environments/{self.environment}/tools/market_stream",
+                {"args": {"action": "list_active"}})
+            rows = (((reply.get("result") or {}).get("data") or {})
+                    .get("rows")) or []
+        except Exception:
+            return 0
+        stopped = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("owner") or "") != "alphalab-desk":
+                continue
+            key = row.get("contract_key")
+            if any(stream_matches_order(key, args) for args in armed if args):
+                continue
+            stream_id = str(row.get("stream_id") or "")
+            if not stream_id:
+                continue
+            try:
+                self._api(
+                    "POST",
+                    f"/environments/{self.environment}/tools/market_stream",
+                    {"args": {"action": "stop", "stream_id": stream_id}})
+                stopped += 1
+                print(f"[{utc_now():%H:%M:%S}] released orphaned stream "
+                      f"{stream_id} ({key}) — no working order holds it",
+                      flush=True)
+            except Exception:
+                pass
+        return stopped
+
     def record_orders(self, context, now):
         """Record every order whose market gate holds; announce each one."""
 
@@ -353,6 +427,7 @@ class Pilot:
             print(f"[{utc_now():%H:%M:%S}] audit: {len(audited)} case(s) "
                   f"broken — {', '.join(sorted(audited))}", flush=True)
         self.record_orders(context, now)
+        self.sweep_streams(context)
         action, reason = decide(context, self.state, now, self.budget)
         if action == "build":
             self._api("POST", f"/environments/{self.environment}/build",

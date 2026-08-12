@@ -252,3 +252,57 @@ def test_the_stream_lane_records_and_releases_the_subscription(tmp_path):
              if path.endswith("/tools/market_stream")]
     assert stops and stops[0]["args"]["action"] == "stop"
     assert stops[0]["args"]["symbol"] == "NVDA"
+
+
+def test_stream_keys_match_their_orders():
+    option_key = "IBKR:OPT:NVDA:20260821:230:C:100:SMART:USD"
+    option_args = {"symbol": "NVDA", "sec_type": "OPT",
+                   "expiration": "20260821", "strike": 230, "right": "C"}
+    assert autopilot.stream_matches_order(option_key, option_args)
+    assert autopilot.stream_matches_order(option_key,
+                                          {**option_args, "strike": 230.0})
+    assert not autopilot.stream_matches_order(option_key,
+                                              {**option_args, "strike": 235})
+    assert not autopilot.stream_matches_order(option_key,
+                                              {**option_args, "right": "P"})
+    stock_key = "IBKR:STK:NVDA:SMART:USD"
+    assert autopilot.stream_matches_order(stock_key, {"symbol": "NVDA"})
+    assert not autopilot.stream_matches_order(stock_key, {"symbol": "AMD"})
+    assert not autopilot.stream_matches_order(option_key, {"symbol": "NVDA"})
+
+
+def test_the_sweep_releases_only_orphaned_desk_streams(tmp_path):
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    calls = []
+    active_rows = [
+        {"stream_id": "s-armed", "owner": "alphalab-desk",
+         "contract_key": "IBKR:OPT:NVDA:20260821:230:C:100:SMART:USD"},
+        {"stream_id": "s-orphan", "owner": "alphalab-desk",
+         "contract_key": "IBKR:OPT:AMD:20260821:175:C:100:SMART:USD"},
+        {"stream_id": "s-foreign", "owner": "someone-else",
+         "contract_key": "IBKR:STK:SPY:SMART:USD"},
+    ]
+
+    def fake_api(method, path, body=None):
+        calls.append((path, body))
+        if path.endswith("/tools/market_stream"):
+            if body["args"]["action"] == "list_active":
+                return {"ok": True, "result": {"ok": True,
+                                               "data": {"rows": active_rows}}}
+            return {"ok": True, "result": {"ok": True, "data": {}}}
+        return {"ok": True}
+
+    pilot._api = fake_api
+    context = {"widgets/fill-nvda-230c": {
+        "kind": "order",
+        "refresh": {"tool": "fill_watch",
+                    "args": {"symbol": "NVDA", "sec_type": "OPT",
+                             "expiration": "20260821", "strike": 230,
+                             "right": "C", "price": 2.3, "quantity": 2}}}}
+    stopped = pilot.sweep_streams(context)
+    assert stopped == 1
+    stops = [body["args"] for path, body in calls
+             if path.endswith("/tools/market_stream")
+             and body["args"].get("action") == "stop"]
+    assert stops == [{"action": "stop", "stream_id": "s-orphan"}]
