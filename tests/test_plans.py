@@ -360,6 +360,91 @@ class AutopilotPlans(unittest.TestCase):
         self.assertEqual(pilot.said.count("[plan nvda] watching"), 1)
 
 
+class TheLibrary(unittest.TestCase):
+    """Plans persist as examples: activation saves, the close judges."""
+
+    def setUp(self):
+        import tempfile
+        self.directory = tempfile.mkdtemp()
+
+    def _plan(self):
+        return {"plan": "close at 100%", "status": "active",
+                "program": _program(PROFIT_TARGET)}
+
+    def test_archive_and_browse_round_trip(self):
+        plans.archive("nvda", self._plan(), directory=self.directory)
+        answer = plans.plan_library({"directory": self.directory})
+        self.assertTrue(answer["ok"])
+        record = answer["data"]["plans"][0]
+        self.assertEqual(record["trade_id"], "nvda")
+        self.assertIn("def manage", record["program"]["code"])
+        self.assertNotIn("outcome", record)
+
+    def test_close_outcome_judges_the_plan(self):
+        trade = {"fill": {"price": 0.96, "quantity": 2,
+                          "observed_at": "2026-08-11T15:00:00-04:00"},
+                 "exit": {"price": 1.92,
+                          "observed_at": "2026-08-14T10:00:00-04:00"}}
+        outcome = plans.close_outcome(trade)
+        self.assertEqual(outcome["pnl_per_contract"], 0.96)
+        self.assertEqual(outcome["pnl_pct"], 100.0)
+        plans.archive("nvda", self._plan(), outcome=outcome,
+                      directory=self.directory)
+        answer = plans.plan_library({"directory": self.directory})
+        self.assertIn("1 with a judged outcome", answer["summary"])
+
+    def test_empty_library_is_named(self):
+        answer = plans.plan_library({"directory": self.directory})
+        self.assertIn("empty", answer["summary"])
+
+
+class AutopilotArchives(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.directory = tempfile.mkdtemp()
+        os.environ["ALPHALAB_PLAN_LIBRARY"] = self.directory
+
+    def tearDown(self):
+        os.environ.pop("ALPHALAB_PLAN_LIBRARY", None)
+
+    def test_first_active_pass_archives_the_endorsement(self):
+        context = _live_context()
+        pilot = _pilot(context, {"live_quote":
+                                 {"quote": {"bid": 1.5, "ask": 1.6}}})
+        pilot.manage_plans(context, NOW)
+        self.assertTrue(context["plans/nvda"].get("archived_at"))
+        answer = plans.plan_library({"directory": self.directory})
+        self.assertEqual(answer["data"]["plans"][0]["trade_id"], "nvda")
+        pilot.manage_plans(context, NOW)  # once, not every pass
+        self.assertEqual(len(answer["data"]["plans"]), 1)
+
+    def test_recorded_exit_judges_and_retires_the_plan(self):
+        context = _live_context()
+        context["plans/nvda"]["archived_at"] = "2026-08-12T15:00:00+00:00"
+        context["widgets/fill-nvda-exit"] = {
+            "kind": "order",
+            "refresh": {"args": {"symbol": "NVDA", "sec_type": "OPT",
+                                 "expiration": "20260821", "strike": 235,
+                                 "right": "C", "price": 1.92, "quantity": 1,
+                                 "action": "sell",
+                                 "contract": "NVDA 20260821 235C"}},
+            "check": {"verdict": "fill-supported", "action": "sell",
+                      "contract": "NVDA 20260821 235C",
+                      "fill": {"contract": "NVDA 20260821 235C",
+                               "price": 1.92, "bid": 1.92, "ask": 1.95,
+                               "quantity": 1,
+                               "observed_at": NOW.isoformat(
+                                   timespec="seconds")}}}
+        pilot = _pilot(context, {})
+        pilot.record_orders(context, NOW)
+        self.assertEqual(context["trades/nvda"]["state"], "closed")
+        self.assertEqual(context["plans/nvda"]["status"], "completed")
+        answer = plans.plan_library({"directory": self.directory})
+        record = answer["data"]["plans"][0]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["outcome"]["pnl_pct"], 100.0)
+
+
 class DisplayNotationFills(unittest.TestCase):
     def test_close_streams_the_canonical_contract(self):
         # A fill recorded in display notation must not quote the stock.

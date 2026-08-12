@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -16,7 +16,7 @@
     "widgets/brief": "the pinned Today card: what the desk is doing and what needs eyes",
     "trades/": "one key per trade: {contracts: [1-5 exact contracts], thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill stays null until the market gate passes — the autopilot records a supported order's exact receipt block {contract, price, bid, ask, quantity, observed_at}; agents never write fill blocks and carry existing ones through unchanged. exit: same shape, closed trades only. The audit (desk/audit) verdicts every trade after each change.",
     "forms/": "minimal fields the desk expands into finished cells: forms/trade/<id> {contracts, thesis, invalidation} → trades/<id>; forms/<id> {template, ...fields} → the template's cell. Problems come back as `errors` on the form itself; revise and set retry: true.",
-    "plans/": "one key per managed position, plans/<trade-id>: {plan: the member's words, status, program, state}. status ladder: requested (member wants a plan — compiling one is the next turn's first job) → draft (agent wrote the program) → active/paused (MEMBER-ONLY moves, made in the UI after inspecting; agents NEVER write active). program = {explanation: prose the member reads, inputs: [{name, tool, args}] read-only tools only, code: 'def manage(inputs, state):' pure Python answering {actions, state}, tests: [{name, inputs, state, expect_actions|expect_no_actions|expect_state_contains}]}. Validate with plan_check before writing. The autopilot gathers the inputs each pass, runs the program, and routes its actions (close, place_exit {price}, cancel_exit, note {text}) through the market gate; `state` persists watermarks between passes. inputs also carry `position` {entry, quantity, contract} and `now` (ET ISO) for free.",
+    "plans/": "one key per managed position, plans/<trade-id>: {plan: the member's words, status, program, state}. status ladder: requested (member wants a plan — compiling one is the next turn's first job) → draft (agent wrote the program) → active/paused (MEMBER-ONLY moves, made in the UI after inspecting; agents NEVER write active). program = {explanation: prose the member reads, inputs: [{name, tool, args}] read-only tools only, code: 'def manage(inputs, state):' pure Python answering {actions, state}, tests: [{name, inputs, state, expect_actions|expect_no_actions|expect_state_contains}]}. Validate with plan_check before writing. Activated plans are archived to the machine's plan library (browse with plan_library — proven examples beat blank pages); a close adds the judged outcome and retires the plan to status completed. The autopilot gathers the inputs each pass, runs the program, and routes its actions (close, place_exit {price}, cancel_exit, note {text}) through the market gate; `state` persists watermarks between passes. inputs also carry `position` {entry, quantity, contract} and `now` (ET ISO) for free.",
     "templates/": "desk-designed cell blueprints (deep-model work, done once): {target, fields, cell with {\"$\": field} placeholders} — extend the shipped templates; any model then operates them via forms/"
   },
   "tools": [
@@ -79,6 +79,18 @@
         "python3",
         "tools/run.py",
         "form_check"
+      ]
+    },
+    {
+      "name": "plan_library",
+      "description": "Browse this machine's saved management plans — every member-activated plan, plus judged outcomes once the position closed. The place to look for proven examples before writing a new program. data: {plans: [{trade_id, plan, status, program, state, outcome?, saved_at}]}.",
+      "args": {
+        "limit": "how many, newest first (default 12, max 30)"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "plan_library"
       ]
     },
     {

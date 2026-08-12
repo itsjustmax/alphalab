@@ -171,6 +171,100 @@ def run_tests(program):
     return results
 
 
+def library_dir():
+    import os
+
+    return os.environ.get(
+        "ALPHALAB_PLAN_LIBRARY",
+        os.path.expanduser("~/.alphalab/plans"))
+
+
+def archive(trade_id, plan, outcome=None, directory=None):
+    """Save a plan to the machine's library — the desk's institutional memory.
+
+    Written at activation (the member endorsed this program) and again at
+    close (the outcome makes it a judged example). One file per trade id,
+    last write wins; future agents browse these through plan_library when
+    they want proven management patterns, not blank-page guesses.
+    """
+
+    import datetime
+    import os
+
+    directory = directory or library_dir()
+    os.makedirs(directory, exist_ok=True)
+    record = {
+        "trade_id": str(trade_id),
+        "plan": (plan or {}).get("plan"),
+        "status": (plan or {}).get("status"),
+        "program": (plan or {}).get("program"),
+        "state": (plan or {}).get("state"),
+        "saved_at": datetime.datetime.now(datetime.timezone.utc)
+                    .isoformat(timespec="seconds"),
+    }
+    if outcome:
+        record["outcome"] = outcome
+    path = os.path.join(directory, f"{str(trade_id)}.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, ensure_ascii=False, indent=1)
+    return path
+
+
+def close_outcome(trade):
+    """The judged result of a managed position, from its own receipts."""
+
+    fill = (trade or {}).get("fill") or {}
+    exit_fill = (trade or {}).get("exit") or {}
+    entry, exit_price = fill.get("price"), exit_fill.get("price")
+    if not isinstance(entry, (int, float)) \
+            or not isinstance(exit_price, (int, float)):
+        return None
+    quantity = fill.get("quantity") or 1
+    return {
+        "entry": entry, "exit": exit_price, "quantity": quantity,
+        "pnl_per_contract": round(exit_price - entry, 4),
+        "pnl_pct": round(100 * (exit_price - entry) / entry, 2)
+        if entry else None,
+        "entered_at": fill.get("observed_at"),
+        "closed_at": exit_fill.get("observed_at"),
+    }
+
+
+def plan_library(arguments):
+    """Tool face: browse the saved plans — proven management examples."""
+
+    import glob
+    import os
+
+    import gates
+
+    directory = str(arguments.get("directory") or library_dir())
+    paths = sorted(glob.glob(os.path.join(directory, "*.json")),
+                   key=os.path.getmtime, reverse=True)
+    limit = min(int(arguments.get("limit") or 12), 30)
+    records, gaps = [], []
+    for path in paths[:limit]:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                record = json.load(handle)
+        except (json.JSONDecodeError, OSError):
+            gaps.append(f"{os.path.basename(path)} is not readable JSON")
+            continue
+        code = ((record.get("program") or {}).get("code") or "")
+        if len(code) > 4000:
+            record.setdefault("program", {})["code"] = code[:4000] + "\n# …"
+        records.append(record)
+    if not records:
+        return gates.receipt(
+            "the plan library is empty — no plan has been activated or "
+            "closed on this machine yet", {"plans": []}, gaps=gaps)
+    judged = [r for r in records if r.get("outcome")]
+    return gates.receipt(
+        f"{len(records)} saved plan(s), {len(judged)} with a judged "
+        f"outcome — newest first",
+        {"plans": records}, gaps=gaps)
+
+
 def plan_check(arguments):
     """Tool face: validate a plan's program and run its tests."""
 

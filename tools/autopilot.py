@@ -501,6 +501,20 @@ class Pilot:
             if plan.get("status") != "active":
                 continue
             trade_id = key[len("plans/"):]
+            if not plan.get("archived_at"):
+                # The member just activated this plan — the endorsement
+                # makes it a library example; the close will judge it.
+                try:
+                    plans.archive(trade_id, plan)
+                    marked = dict(plan)
+                    marked["archived_at"] = now.isoformat(timespec="seconds")
+                    self._api("POST",
+                              f"/environments/{self.environment}/context",
+                              {"key": key, "value": marked})
+                    plan = marked
+                except OSError as error:
+                    print(f"[{utc_now():%H:%M:%S}] plan library: "
+                          f"{str(error)[:120]}", flush=True)
             trade = (context or {}).get(f"trades/{trade_id}")
             if not isinstance(trade, dict) \
                     or trade.get("state") != "open-simulated":
@@ -637,6 +651,23 @@ class Pilot:
                 ((context.get(recording["card_key"]) or {})
                  .get("refresh") or {}).get("args") or {})
             self._stop_stream(stream_args)
+            if recording["case"].get("state") == "closed":
+                plan_key = "plans/" + recording["case_key"][len("trades/"):]
+                plan = context.get(plan_key)
+                if isinstance(plan, dict) and plan.get("program"):
+                    retired = dict(plan)
+                    retired["status"] = "completed"
+                    try:
+                        plans.archive(
+                            recording["case_key"][len("trades/"):],
+                            retired,
+                            outcome=plans.close_outcome(recording["case"]))
+                    except OSError as error:
+                        print(f"[{utc_now():%H:%M:%S}] plan library: "
+                              f"{str(error)[:120]}", flush=True)
+                    self._api("POST",
+                              f"/environments/{self.environment}/context",
+                              {"key": plan_key, "value": retired})
             print(f"[{utc_now():%H:%M:%S}] {recording['summary']}", flush=True)
         if recordings:
             self._save()

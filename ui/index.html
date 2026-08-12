@@ -175,6 +175,13 @@
   .s-plan-draft { border-color: var(--accent); color: var(--accent); }
   .s-plan-requested { border-color: var(--warn); color: var(--warn); }
   .s-plan-paused, .s-plan-unmanaged { color: var(--muted); }
+  .s-plan-completed { border-color: var(--border-strong);
+    color: var(--muted); }
+  .plan-chip { cursor: pointer; background: none; font: inherit;
+    font-size: .68rem; }
+  .mgmt-words { font-style: italic; font-size: .8rem;
+    color: var(--muted); margin: .3rem 0 .35rem; }
+  td.mgmt { min-width: 220px; }
   .choices { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0; }
   .choices button { font-size: .85rem; }
   .choices button.selected { border-color: var(--accent); color: var(--accent); }
@@ -814,7 +821,7 @@ function renderPositions(view) {
   const table = el("table");
   const head = el("tr");
   for (const column of ["contract", "state", "entry", "pnl from entry",
-                        "exit / result", "underlying (EOD)", "invalidation"])
+                        "exit / result", "underlying (EOD)", "management"])
     head.append(el("td", {class: "key"}, column));
   table.append(head);
   for (const [key, c] of rows) {
@@ -875,7 +882,7 @@ function renderPositions(view) {
       });
     }
     line.append(underlying);
-    line.append(el("td", {}, c.invalidation || "—"));
+    line.append(managementCell(key, c, view));
     table.append(line);
   }
   section.append(table);
@@ -929,6 +936,38 @@ function contractArgs(label) {
       strike: parseFloat(strikeRight[1]),
       right: strikeRight[2].toUpperCase()});
   return args;
+}
+
+// One cell tying a position to how it's managed: the plan (profit
+// taking, trails, triggers) above the invalidation — exit thinking in
+// one place, linked straight to the management section's controls.
+function managementCell(tradeKey, trade, view) {
+  const cell = el("td", {class: "mgmt"});
+  const id = tradeKey.slice(7);
+  const plan = view.context[`plans/${id}`];
+  const head = el("div", {class: "mgmt-plan"});
+  const chip = el("button", {type: "button",
+    class: `state s-plan-${plan?.status || "unmanaged"} plan-chip`,
+    title: plan?.program ? "inspect this plan" : "write a plan below"},
+    plan?.status || "no plan");
+  chip.addEventListener("click", () => {
+    if (plan?.program) openPlanModal(id);
+    else document.querySelector(".plan-row")?.scrollIntoView(
+      {behavior: "smooth", block: "center"});
+  });
+  head.append(chip);
+  cell.append(head);
+  if (plan?.plan) cell.append(el("div", {class: "mgmt-words"},
+    `“${String(plan.plan).slice(0, 160)}${plan.plan.length > 160 ? "…" : ""}”`));
+  if (plan?.last_error)
+    cell.append(el("div", {class: "violation"}, `⚠ ${plan.last_error}`));
+  if (trade.invalidation) {
+    const inv = el("div", {class: "invalidation"});
+    inv.append(el("b", {}, "invalidation "));
+    inv.append(document.createTextNode(trade.invalidation));
+    cell.append(inv);
+  }
+  return cell;
 }
 
 // ---- Position management: the member's plan, the agent's program ----

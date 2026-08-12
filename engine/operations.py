@@ -146,6 +146,7 @@ OPERATIONS = {
     "live_quotes": gates.live_quotes,
     "form_check": forms.form_check,
     "plan_check": plans.plan_check,
+    "plan_library": plans.plan_library,
 }
 
 
