@@ -212,3 +212,43 @@ def test_a_recorded_fill_earns_a_narration_turn():
     assert action == "build"
     assert "paper fill recorded: cases/nvda-190c" == reason.replace("paper fill recorded: ", "paper fill recorded: ")
     assert "cases/nvda-190c" in reason
+
+
+def test_the_stream_lane_records_and_releases_the_subscription(tmp_path):
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    calls = []
+    order_args = {"symbol": "NVDA", "sec_type": "OPT",
+                  "expiration": "20260814", "strike": 190, "right": "C",
+                  "price": 4.0, "quantity": 2, "action": "buy",
+                  "contract": "NVDA 20260814 190C"}
+    live_check = {"verdict": "fill-supported", "contract": "NVDA 20260814 190C",
+                  "action": "buy", "stream": {"stream_id": "s-1"},
+                  "fill": {"price": 4.0, "bid": 3.9, "ask": 4.0, "quantity": 2,
+                           "observed_at": "2026-08-12T14:30:30-04:00"}}
+
+    def fake_api(method, path, body=None):
+        calls.append((path, body))
+        if path.endswith("/tools/fill_watch"):
+            return {"ok": True, "result": {"ok": True, "data": live_check}}
+        if path.endswith("/tools/case_check"):
+            return {"ok": True, "result": {"ok": True, "data": {"violations": []}}}
+        return {"ok": True}
+
+    pilot._api = fake_api
+    context = {
+        "widgets/fill-nvda-190c": {"kind": "order",
+                                   "refresh": {"tool": "fill_watch",
+                                               "args": order_args}},
+        "cases/nvda-190c": dict(WATCHING_CASE),
+    }
+    recordings = pilot.record_orders(context, RTH)
+    assert len(recordings) == 1
+    case_writes = [body for path, body in calls
+                   if path.endswith("/context") and body
+                   and body.get("key") == "cases/nvda-190c"]
+    assert case_writes and case_writes[0]["value"]["state"] == "open-simulated"
+    stops = [body for path, body in calls
+             if path.endswith("/tools/market_stream")]
+    assert stops and stops[0]["args"]["action"] == "stop"
+    assert stops[0]["args"]["symbol"] == "NVDA"

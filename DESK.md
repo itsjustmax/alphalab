@@ -48,8 +48,10 @@ envelope at `result.payload_json` if you need more than the answer).
 
 Working paper orders are program-backed cards with a fixed contract:
 `widgets/fill-<case-id>` (or `…-exit`), kind "order", carrying a
-`refresh` program running `fill_check` (`value_path` `result.data`,
-`into` `check`). This client renders the order's intent from the
+`refresh` program running `fill_watch` (`value_path` `result.data`,
+`into` `check`) — a standing reqMktData stream per contract, gated
+tick by tick; the autopilot also watches each armed order live and
+releases the stream when the order resolves. This client renders the order's intent from the
 program args and its live status from `check`: armed (no receipt yet),
 supported (green — the live market contains the price), or refused
 (the reasons, in red). No buttons — paper fills take no member

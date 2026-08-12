@@ -90,5 +90,8 @@ def normalize(reply):
             payload = {}
         answer = payload.get("answer") if isinstance(payload, dict) else None
         if isinstance(answer, dict):
-            reply["data"] = answer
+            reply["data"] = dict(answer)
+            rows = payload.get("rows")
+            if isinstance(rows, list) and "rows" not in reply["data"]:
+                reply["data"]["rows"] = rows
     return reply

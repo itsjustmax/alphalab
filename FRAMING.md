@@ -50,7 +50,7 @@ Entering is placing a **working paper order**: author
 `widgets/fill-<case-id>` exactly as
 
     {"kind": "order", "title": "Paper order — <contract>",
-     "refresh": {"tool": "fill_check",
+     "refresh": {"tool": "fill_watch",
                  "args": {"symbol": ..., "sec_type": "OPT",
                           "expiration": ..., "strike": ..., "right": ...,
                           "price": ..., "quantity": ..., "action": "buy",
@@ -60,11 +60,13 @@ Entering is placing a **working paper order**: author
 The card is a standing paper limit: pick `price` at or inside the last
 receipted market, in line with the member's standing direction (their
 intake and their answers to your asks — when direction is genuinely
-uncertain, ask first). The gate re-checks on schedule; while the live
-market contains the price, **the autopilot records the fill
-mechanically** — the receipt's exact fill block lands in the case, the
-state advances to open-simulated (a `…-exit` card writes `exit` and
-closes), and the card retires. You never transcribe a fill; your next
+uncertain, ask first). A working order holds a **standing reqMktData
+stream** — one leased broker subscription per contract — and the
+autopilot watches its ticks; the moment the live market contains the
+price, **the fill records mechanically** — the tick's exact fill block
+lands in the case, the state advances to open-simulated (a `…-exit`
+card writes `exit` and closes), the card retires, and the stream is
+released. You never transcribe a fill; your next
 turn narrates it — update the brief, plan the exit. To cancel a working
 order, write null on its card. An armed order card is a standing
 instruction: routine turns leave it alone; re-price it only as a

@@ -312,3 +312,73 @@ def test_bridged_receipts_answer_at_data_like_every_other_lane():
     assert bridge.normalize(dict(inline)) == inline
     assert bridge.normalize({"ok": False, "payload_json": "not json"}) == {
         "ok": False, "payload_json": "not json"}
+
+
+# -- the stream lane (fill_watch / live_quote) --------------------------------
+
+def stream_invoke(rows, start_ok=True):
+    def invoke(operation, arguments):
+        assert operation == "ibkr.market_stream"
+        if arguments.get("action") == "start":
+            return {"ok": start_ok, "data": {"stream_id": "s-1"}}
+        return {"ok": True, "data": {"rows": rows}}
+    return invoke
+
+
+def live_tick(**overrides):
+    tick = {"bid": 3.90, "ask": 4.00, "last": 3.95, "close": 3.1,
+            "bid_size": 12.0, "ask_size": 9.0, "model_iv": 0.31,
+            "delta": 0.32, "quote_time": LIVE_CLOCK,
+            "contract_key": "IBKR:OPT:NVDA:20260814:190:C:100:SMART:USD"}
+    tick.update(overrides)
+    return tick
+
+
+def test_fill_watch_supports_a_price_inside_the_streamed_tick():
+    result = gates.fill_watch(FILL_ARGS, invoke=stream_invoke([live_tick()]),
+                              now=NOW)
+    assert result["ok"] is True
+    assert result["data"]["verdict"] == "fill-supported"
+    assert result["data"]["fill"]["observed_at"] == LIVE_CLOCK
+    assert result["data"]["stream"]["stream_id"] == "s-1"
+
+
+def test_fill_watch_applies_the_same_rulebook_as_fill_check():
+    outside = gates.fill_watch({**FILL_ARGS, "price": 6.05},
+                               invoke=stream_invoke([live_tick()]), now=NOW)
+    assert outside["ok"] is False
+    assert any("3.9 × 4" in gap for gap in outside["gaps"])
+    stale = gates.fill_watch(
+        FILL_ARGS,
+        invoke=stream_invoke([live_tick(quote_time="2026-08-12T14:10:00-04:00")]),
+        now=NOW)
+    assert stale["ok"] is False
+    assert any("no older than 120s" in gap for gap in stale["gaps"])
+
+
+def test_fill_watch_without_ticks_refuses_honestly():
+    result = gates.fill_watch(FILL_ARGS, invoke=stream_invoke([]), now=NOW)
+    assert result["ok"] is False
+    assert any("no persisted ticks yet" in gap for gap in result["gaps"])
+
+
+def test_live_quote_answers_the_freshest_tick_with_its_clock():
+    result = gates.live_quote({"symbol": "NVDA", "sec_type": "OPT"},
+                              invoke=stream_invoke([live_tick()]))
+    assert result["ok"] is True
+    quote = result["data"]["quote"]
+    assert quote["bid"] == 3.90 and quote["ask"] == 4.00
+    assert quote["observed_at"] == LIVE_CLOCK
+    assert result["data"]["stream"]["stream_id"] == "s-1"
+
+
+def test_the_bridge_lifts_stream_rows_to_data():
+    import bridge
+
+    reply = bridge.normalize({
+        "ok": True,
+        "payload_json": json.dumps({"answer": {"stream_id": "s-1"},
+                                    "rows": [{"bid": 1.0}]}),
+    })
+    assert reply["data"]["rows"] == [{"bid": 1.0}]
+    assert reply["data"]["stream_id"] == "s-1"

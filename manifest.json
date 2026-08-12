@@ -1,11 +1,11 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
-    "quotes/": "one key per symbol, canonical: {\"refresh\": {\"tool\": \"quote_snapshot\", \"args\": {\"symbol\": \"NVDA\", \"max_age_seconds\": 60}, \"minutes\": 5, \"value_path\": \"result.data.quote\", \"into\": \"quote\"}} — the desk renders entry.quote {bid, ask, last, observed_at} as a live chip",
+    "quotes/": "one key per symbol, canonical: {\"refresh\": {\"tool\": \"live_quote\", \"args\": {\"symbol\": \"NVDA\"}, \"minutes\": 1, \"value_path\": \"result.data.quote\", \"into\": \"quote\"}} — a standing reqMktData stream keeps it current; the desk renders entry.quote {bid, ask, last, observed_at} as a live chip. Use quote_snapshot only for one-off or slow-cadence reads.",
     "findings/": "one key per finding: {title, source, as_of} — evidence worth keeping; the desk renders the findings feed from these",
     "cases/": "one key per trade case: {contract, thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill stays null until the market gate passes — the autopilot records a supported order's exact receipt block {price, bid, ask, quantity, observed_at}; agents never write fill blocks and carry existing ones through unchanged. exit: same shape, closed cases only. The audit (desk/audit) verdicts every case after each change.",
     "answers/": "the member's replies to ask cards, one key per card id — direction and risk decisions only; fills need no answers",
@@ -67,7 +67,7 @@
     },
     {
       "name": "fill_check",
-      "description": "The market gate for simulated fills. Fetches its own live receipted quote, verifies regular session, freshness, and that the price sits inside bid/ask. No live receipt, no fill. data: {verdict: 'fill-supported', contract, action, fill} on support; {verdict: 'refused', reasons} otherwise.",
+      "description": "The market gate, snapshot lane (one-off checks; prefer fill_watch for working orders). Fetches its own live receipted quote, verifies regular session, freshness, and that the price sits inside bid/ask. No live receipt, no fill. data: {verdict: 'fill-supported', contract, action, fill} on support; {verdict: 'refused', reasons} otherwise.",
       "args": {
         "symbol": "ticker, e.g. NVDA",
         "sec_type": "STK (default), OPT, FUT, IND",
@@ -86,6 +86,61 @@
       ]
     },
     {
+      "name": "fill_watch",
+      "description": "The market gate, stream lane: ensures a standing reqMktData subscription for the contract (one leased broker connection, worker-renewed) and gates the freshest persisted tick. The lane for working orders — tick-level truth, no snapshot lease cycle per check. data: {verdict: 'fill-supported', contract, action, fill, stream} on support; {verdict: 'refused', reasons} otherwise.",
+      "args": {
+        "symbol": "ticker, e.g. NVDA",
+        "sec_type": "STK (default), OPT, FUT, IND",
+        "expiration": "options: YYYYMMDD",
+        "strike": "options: strike price",
+        "right": "options: C or P",
+        "price": "the working paper limit",
+        "quantity": "whole contracts, 1-100",
+        "action": "buy (default) or sell",
+        "contract": "display label, e.g. 'NVDA 8/21 230C'"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "fill_watch"
+      ]
+    },
+    {
+      "name": "live_quote",
+      "description": "A continuously current quote from the standing tick stream: ensures the subscription, answers the freshest persisted tick with its own clock. The tool for any card whose price should update consistently. data: {quote: {bid, ask, last, close, bid_size, ask_size, model_iv, delta, observed_at}, stream: {stream_id}}.",
+      "args": {
+        "symbol": "ticker, e.g. NVDA",
+        "sec_type": "STK (default), OPT, FUT, IND",
+        "expiration": "options: YYYYMMDD",
+        "strike": "options: strike price",
+        "right": "options: C or P"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "live_quote"
+      ]
+    },
+    {
+      "name": "market_stream",
+      "description": "Manage the standing reqMktData subscriptions directly: start, stop, status, list_active, latest. fill_watch and live_quote start streams for you; use this to stop one or inspect the registry. data: the stream answer ({stream_id, stream, rows, latest_quote} by action).",
+      "args": {
+        "action": "start, stop, status, list_active, or latest",
+        "symbol": "ticker",
+        "sec_type": "STK (default), OPT, FUT, IND",
+        "expiration": "options: YYYYMMDD",
+        "strike": "options: strike price",
+        "right": "options: C or P",
+        "stream_id": "registry handle, for stop/status",
+        "limit": "rows for action=latest"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "market_stream"
+      ]
+    },
+    {
       "name": "system_health",
       "description": "Check the data engine: TWS, Timescale, integrations. data: component statuses.",
       "args": {},
@@ -97,7 +152,7 @@
     },
     {
       "name": "quote_snapshot",
-      "description": "One receipted IBKR quote: bid/ask/last/mark with source clocks. data: {quote: {bid, ask, last, mid, observed_at}, freshness}.",
+      "description": "One receipted IBKR quote (one-off/slow-cadence; prefer live_quote where price should stay current): bid/ask/last/mark with source clocks. data: {quote: {bid, ask, last, mid, observed_at}, freshness}.",
       "args": {
         "symbol": "ticker, e.g. NVDA",
         "sec_type": "STK (default), OPT, FUT, IND, CASH",

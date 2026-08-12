@@ -230,64 +230,52 @@ def _quote_from_receipt(raw):
     return quote, []
 
 
-def fill_check(arguments, fetch_quote=None, now=None):
-    """The market gate: may this simulated fill be recorded right now?
+def _parse_order(arguments, tool):
+    """Validate an order's own fields; (refusal, None) or (None, parsed)."""
 
-    Fetches its own live quote (the agent supplies no prices to trust),
-    verifies regular session, freshness, and that the price sits inside
-    the receipted bid/ask. An ok answer carries the exact fill block to
-    record verbatim; any failure names its reasons. No receipt, no fill.
-    """
-
-    now = now or _now()
     symbol = str(arguments.get("symbol") or "").strip().upper()
     if not symbol:
-        return _refused("fill_check needs a symbol", ["no symbol given"])
+        return _refused(f"{tool} needs a symbol", ["no symbol given"]), None
     action = str(arguments.get("action") or "buy").strip().lower()
     if action not in ("buy", "sell"):
         return _refused("a simulated fill is a buy or a sell",
-                        [f"action {action!r} is neither"])
+                        [f"action {action!r} is neither"]), None
     price = _number(arguments.get("price"))
     if price is None or price < 0:
-        return _refused("fill_check needs a finite non-negative price",
-                        ["no usable price given"])
+        return _refused(f"{tool} needs a finite non-negative price",
+                        ["no usable price given"]), None
     try:
         quantity = int(arguments.get("quantity") or 0)
     except (TypeError, ValueError):
         quantity = 0
     if not 1 <= quantity <= 100:
         return _refused("a simulated fill is 1 through 100 whole contracts",
-                        [f"quantity {arguments.get('quantity')!r}"])
+                        [f"quantity {arguments.get('quantity')!r}"]), None
     contract = str(arguments.get("contract") or "").strip() or " ".join(
         str(arguments.get(field) or "").strip()
         for field in ("symbol", "expiration", "strike", "right")
     ).strip() or symbol
+    return None, {"symbol": symbol, "action": action, "price": price,
+                  "quantity": quantity, "contract": contract}
 
-    if fetch_quote is None:
-        import bridge
 
-        if not bridge.available():
-            return _refused(
-                "no live quote lane on this machine — a simulated fill "
-                "cannot be verified here",
-                ["the full engine (broker quotes) is not installed; "
-                 "no receipt, no confirmation may be offered"],
-            )
-
-        def fetch_quote(request):
-            return bridge.invoke("ibkr.quote.snapshot", request)
-
-    request = {"symbol": symbol, "max_age_seconds": 30}
+def _contract_request(arguments):
+    request = {"symbol": str(arguments.get("symbol") or "").strip().upper()}
     for field in ("sec_type", "expiration", "strike", "right"):
         if arguments.get(field) not in (None, ""):
             request[field] = arguments[field]
-    quote, gaps = _quote_from_receipt(fetch_quote(request))
-    if quote is None:
-        return _refused(f"{contract}: no live receipted quote — no fill", gaps)
+    return request
 
+
+def _gate_quote(parsed, quote, now, extra=None):
+    """The one rulebook for any observed market, snapshot or stream tick."""
+
+    contract, action = parsed["contract"], parsed["action"]
+    price, quantity = parsed["price"], parsed["quantity"]
     bid, ask = _number(quote.get("bid")), _number(quote.get("ask"))
     observed_at = str(
-        quote.get("observed_at") or quote.get("source_time") or ""
+        quote.get("observed_at") or quote.get("quote_time")
+        or quote.get("source_time") or ""
     ).strip()
     clock = parse_clock(observed_at)
     if bid is None or ask is None or ask <= 0 or ask < bid or bid < 0:
@@ -323,20 +311,155 @@ def fill_check(arguments, fetch_quote=None, now=None):
             [f"the live receipted market is {bid:g} × {ask:g} as of "
              f"{observed_at}; ${price:g} is not in it"],
         )
-
     clock_text = clock.astimezone(ET).strftime("%H:%M:%S ET · %Y-%m-%d")
+    data = {
+        # One canonical fill block, ready to record verbatim.
+        "verdict": "fill-supported",
+        "contract": contract,
+        "action": action,
+        "fill": {
+            "price": price, "bid": bid, "ask": ask,
+            "quantity": quantity, "observed_at": observed_at,
+        },
+    }
+    if extra:
+        data.update(extra)
     return receipt(
         f"{contract}: {action} {quantity} @ ${price:g} is supported by the "
         f"live market {bid:g} × {ask:g} (receipted {clock_text}) — "
         "the fill may be recorded",
-        {
-            # One canonical fill block, ready to record verbatim.
-            "verdict": "fill-supported",
-            "contract": contract,
-            "action": action,
-            "fill": {
-                "price": price, "bid": bid, "ask": ask,
-                "quantity": quantity, "observed_at": observed_at,
-            },
-        },
+        data,
+    )
+
+
+def fill_check(arguments, fetch_quote=None, now=None):
+    """The market gate, snapshot lane: one leased broker observation.
+
+    Fetches its own quote (the agent supplies no prices to trust) and
+    applies the one rulebook. Prefer fill_watch for working orders — it
+    rides the standing tick stream; this lane suits one-off checks.
+    """
+
+    now = now or _now()
+    refusal, parsed = _parse_order(arguments, "fill_check")
+    if refusal:
+        return refusal
+    if fetch_quote is None:
+        import bridge
+
+        if not bridge.available():
+            return _refused(
+                "no live quote lane on this machine — a simulated fill "
+                "cannot be verified here",
+                ["the full engine (broker quotes) is not installed; "
+                 "no receipt, no confirmation may be offered"],
+            )
+
+        def fetch_quote(request):
+            return bridge.invoke("ibkr.quote.snapshot", request)
+
+    request = {**_contract_request(arguments), "max_age_seconds": 30}
+    quote, gaps = _quote_from_receipt(fetch_quote(request))
+    if quote is None:
+        return _refused(f"{parsed['contract']}: no live receipted quote — "
+                        "no fill", gaps)
+    return _gate_quote(parsed, quote, now)
+
+
+def _stream_tick(arguments, invoke, owner="alphalab-desk"):
+    """Ensure a reqMktData stream for the contract; answer its freshest tick.
+
+    One leased broker connection per contract, held by the engine's
+    managed worker — no snapshot lease cycle per read. Returns
+    (tick, stream_info, gaps); tick is None when no market answered.
+    """
+
+    request = _contract_request(arguments)
+    started = invoke("ibkr.market_stream",
+                     {**request, "action": "start", "owner": owner})
+    stream_info = {}
+    if isinstance(started, dict):
+        data = started.get("data") or {}
+        stream_info = {"stream_id": data.get("stream_id"),
+                       "started_ok": bool(started.get("ok"))}
+    latest = invoke("ibkr.market_stream",
+                    {**request, "action": "latest", "limit": 1})
+    if not isinstance(latest, dict) or latest.get("ok") is False:
+        detail = (latest or {}).get("error") or (latest or {}).get("summary") \
+            or "unnamed failure"
+        return None, stream_info, [f"the stream lane failed: {str(detail)[:300]}"]
+    rows = ((latest.get("data") or {}).get("rows")) or []
+    if not rows or not isinstance(rows[0], dict):
+        return None, stream_info, [
+            "the stream has no persisted ticks yet — the subscription may "
+            "still be warming, or the market is not printing"]
+    return rows[0], stream_info, []
+
+
+def fill_watch(arguments, invoke=None, now=None):
+    """The market gate, stream lane: the freshest reqMktData tick.
+
+    Ensures a managed live subscription for the contract (idempotent),
+    reads the newest persisted tick, and applies the one rulebook. This
+    is the lane for working orders: tick-level truth without a snapshot
+    lease cycle per check. No tick, no fill.
+    """
+
+    now = now or _now()
+    refusal, parsed = _parse_order(arguments, "fill_watch")
+    if refusal:
+        return refusal
+    if invoke is None:
+        import bridge
+
+        if not bridge.available():
+            return _refused(
+                "no live quote lane on this machine — a simulated fill "
+                "cannot be verified here",
+                ["the full engine (broker quotes) is not installed; "
+                 "no receipt, no confirmation may be offered"],
+            )
+        invoke = bridge.invoke
+    tick, stream_info, gaps = _stream_tick(arguments, invoke)
+    if tick is None:
+        return _refused(f"{parsed['contract']}: no live tick — no fill", gaps)
+    return _gate_quote(parsed, tick, now, extra={"stream": stream_info})
+
+
+def live_quote(arguments, invoke=None):
+    """A continuously current quote from the standing tick stream.
+
+    Ensures the subscription and answers the freshest persisted tick with
+    its own clock — the tool for any card whose price should update
+    consistently. Snapshots remain for one-off or slow-cadence reads.
+    """
+
+    symbol = str(arguments.get("symbol") or "").strip().upper()
+    if not symbol:
+        return receipt("live_quote needs a symbol", ok=False,
+                       gaps=["no symbol given"])
+    if invoke is None:
+        import bridge
+
+        if not bridge.available():
+            return receipt(
+                "no live quote lane on this machine", ok=False,
+                gaps=["the full engine (broker quotes) is not installed"])
+        invoke = bridge.invoke
+    tick, stream_info, gaps = _stream_tick(arguments, invoke)
+    if tick is None:
+        return receipt(f"{symbol}: no live tick yet", ok=False, gaps=gaps)
+    observed_at = str(tick.get("quote_time") or tick.get("observed_at") or "")
+    quote = {
+        "bid": tick.get("bid"), "ask": tick.get("ask"),
+        "last": tick.get("last"), "close": tick.get("close"),
+        "bid_size": tick.get("bid_size"), "ask_size": tick.get("ask_size"),
+        "model_iv": tick.get("model_iv"), "delta": tick.get("delta"),
+        "observed_at": observed_at,
+    }
+    return receipt(
+        f"{tick.get('contract_key') or symbol}: {tick.get('bid')} × "
+        f"{tick.get('ask')} (last {tick.get('last')}) streaming as of "
+        f"{observed_at}",
+        {"quote": quote, "stream": stream_info},
     )

@@ -135,6 +135,8 @@ OPERATIONS = {
     "capabilities": capabilities,
     "case_check": gates.case_check,
     "fill_check": gates.fill_check,
+    "fill_watch": gates.fill_watch,
+    "live_quote": gates.live_quote,
 }
 
 

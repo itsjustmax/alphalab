@@ -92,51 +92,62 @@ def supported_orders(context, now):
 
     recordings = []
     for key, card in sorted((context or {}).items()):
-        if not (key.startswith("widgets/fill-") and isinstance(card, dict)):
+        if not is_order_card(key, card):
             continue
-        if card.get("kind") != "order":
-            continue
-        check = card.get("check")
-        if not isinstance(check, dict) or check.get("verdict") != "fill-supported":
-            continue
-        fill = check.get("fill")
-        if not isinstance(fill, dict):
-            continue
-        clock = gates.parse_clock(fill.get("observed_at"))
-        if clock is None or not \
-                0 <= (now - clock).total_seconds() <= RECORD_MAX_AGE_SECONDS:
-            continue  # stale receipt — wait for the card's next check
-        suffix = key[len("widgets/fill-"):]
-        is_exit = suffix.endswith("-exit")
-        case_id = suffix[:-5] if is_exit else suffix
-        case = (context or {}).get(f"cases/{case_id}")
-        if not isinstance(case, dict):
-            continue
-        state = case.get("state")
-        if is_exit and state != "open-simulated":
-            continue
-        if not is_exit and state not in ("idea", "watching"):
-            continue
-        recorded = dict(case)
-        if is_exit:
-            recorded["exit"] = fill
-            recorded["state"] = "closed"
-        else:
-            recorded["fill"] = fill
-            recorded["state"] = "open-simulated"
-        recorded["as_of"] = now.isoformat(timespec="seconds")
-        recordings.append({
-            "card_key": key,
-            "case_key": f"cases/{case_id}",
-            "case": recorded,
-            "summary": (
-                f"paper {'exit' if is_exit else 'fill'} recorded — "
-                f"{check.get('action', 'buy')} {fill['quantity']} × "
-                f"{check.get('contract', case_id)} @ ${fill['price']:g} "
-                f"against the live market {fill['bid']:g} × {fill['ask']:g} "
-                f"({fill['observed_at']})"),
-        })
+        recording = order_recording(key, context, card.get("check"), now)
+        if recording:
+            recordings.append(recording)
     return recordings
+
+
+def is_order_card(key, card):
+    return (key.startswith("widgets/fill-") and isinstance(card, dict)
+            and card.get("kind") == "order")
+
+
+def order_recording(card_key, context, check, now):
+    """The writes one supporting check earns — from a card's own program
+    or a live fill_watch tick; the rules are identical either way."""
+
+    if not isinstance(check, dict) or check.get("verdict") != "fill-supported":
+        return None
+    fill = check.get("fill")
+    if not isinstance(fill, dict):
+        return None
+    clock = gates.parse_clock(fill.get("observed_at"))
+    if clock is None or not \
+            0 <= (now - clock).total_seconds() <= RECORD_MAX_AGE_SECONDS:
+        return None  # stale receipt — wait for the next check
+    suffix = card_key[len("widgets/fill-"):]
+    is_exit = suffix.endswith("-exit")
+    case_id = suffix[:-5] if is_exit else suffix
+    case = (context or {}).get(f"cases/{case_id}")
+    if not isinstance(case, dict):
+        return None
+    state = case.get("state")
+    if is_exit and state != "open-simulated":
+        return None
+    if not is_exit and state not in ("idea", "watching"):
+        return None
+    recorded = dict(case)
+    if is_exit:
+        recorded["exit"] = fill
+        recorded["state"] = "closed"
+    else:
+        recorded["fill"] = fill
+        recorded["state"] = "open-simulated"
+    recorded["as_of"] = now.isoformat(timespec="seconds")
+    return {
+        "card_key": card_key,
+        "case_key": f"cases/{case_id}",
+        "case": recorded,
+        "summary": (
+            f"paper {'exit' if is_exit else 'fill'} recorded — "
+            f"{check.get('action', 'buy')} {fill['quantity']} × "
+            f"{check.get('contract', case_id)} @ ${fill['price']:g} "
+            f"against the live market {fill['bid']:g} × {fill['ask']:g} "
+            f"({fill['observed_at']})"),
+    }
 
 
 def audit_violations(cases, check):
@@ -262,10 +273,57 @@ class Pilot:
         })
         return violations
 
+    def watch_orders(self, context, now):
+        """The stream lane: run fill_watch per armed order — the freshest
+        reqMktData tick, one standing leased subscription per contract —
+        and build recordings from live truth. Falls back silently to the
+        card's own snapshot check when the engine lane is down."""
+
+        recordings = []
+        for key, card in sorted((context or {}).items()):
+            if not is_order_card(key, card):
+                continue
+            args = ((card.get("refresh") or {}).get("args")) or {}
+            if not args.get("symbol"):
+                continue
+            try:
+                reply = self._api(
+                    "POST",
+                    f"/environments/{self.environment}/tools/fill_watch",
+                    {"args": args})
+                check = (reply.get("result") or {}).get("data") or {}
+            except Exception:
+                continue
+            recording = order_recording(key, context, check, now)
+            if recording:
+                recording["stream_args"] = args
+                recordings.append(recording)
+        return recordings
+
+    def _stop_stream(self, args):
+        """Release the order's standing subscription (and its lease)."""
+
+        request = {field: args[field]
+                   for field in ("symbol", "sec_type", "expiration",
+                                 "strike", "right")
+                   if args.get(field) not in (None, "")}
+        if not request.get("symbol"):
+            return
+        try:
+            self._api("POST",
+                      f"/environments/{self.environment}/tools/market_stream",
+                      {"args": {**request, "action": "stop"}})
+        except Exception:
+            pass
+
     def record_orders(self, context, now):
         """Record every order whose market gate holds; announce each one."""
 
-        recordings = supported_orders(context, now)
+        by_case = {}
+        for recording in self.watch_orders(context, now) \
+                + supported_orders(context, now):
+            by_case.setdefault(recording["case_key"], recording)
+        recordings = list(by_case.values())
         for recording in recordings:
             self._api("POST", f"/environments/{self.environment}/context",
                       {"key": recording["case_key"], "value": recording["case"]})
@@ -276,6 +334,10 @@ class Pilot:
             fills = self.state.setdefault("unnarrated_fills", [])
             if recording["case_key"] not in fills:
                 fills.append(recording["case_key"])
+            stream_args = recording.get("stream_args") or (
+                ((context.get(recording["card_key"]) or {})
+                 .get("refresh") or {}).get("args") or {})
+            self._stop_stream(stream_args)
             print(f"[{utc_now():%H:%M:%S}] {recording['summary']}", flush=True)
         if recordings:
             self._save()
