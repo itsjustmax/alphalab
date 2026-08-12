@@ -32,6 +32,7 @@ import time
 import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "engine"))
+import forms  # noqa: E402  (minimal fields in, finished cells out)
 import gates  # noqa: E402  (ET, parse_clock — one rulebook for clocks)
 
 MIN_GAP_SECONDS = 10 * 60
@@ -401,6 +402,49 @@ class Pilot:
                 pass
         return stopped
 
+    def apply_forms(self, context, now):
+        """Expand every pending form into its finished cell.
+
+        The cheap-model lane: an agent writes minimal fields at forms/*;
+        this pass assembles, validates, writes the real cell, and retires
+        the form. Violations land back ON the form, named — the next turn
+        reads its own mistake.
+        """
+
+        applied = 0
+        templates = {key[10:]: value for key, value in (context or {}).items()
+                     if key.startswith("templates/") and isinstance(value, dict)}
+        for key, form in sorted((context or {}).items()):
+            if not key.startswith("forms/") or not isinstance(form, dict):
+                continue
+            if form.get("errors") and not form.get("retry"):
+                continue  # already named; wait for the agent to revise
+            if key.startswith("forms/trade/"):
+                trade, violations = forms.trade_from_form(form)
+                target = "trades/" + key[len("forms/trade/"):]
+                cell = trade
+            else:
+                target, cell, violations = forms.expand(form, templates)
+            if violations:
+                marked = {k: v for k, v in form.items() if k != "retry"}
+                marked["errors"] = violations
+                marked["checked_at"] = now.isoformat(timespec="seconds")
+                self._api("POST",
+                          f"/environments/{self.environment}/context",
+                          {"key": key, "value": marked})
+                print(f"[{utc_now():%H:%M:%S}] form {key}: "
+                      f"{len(violations)} problem(s) named", flush=True)
+                continue
+            if key.startswith("forms/trade/"):
+                cell["as_of"] = now.isoformat(timespec="seconds")
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": target, "value": cell})
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": key, "value": None})
+            applied += 1
+            print(f"[{utc_now():%H:%M:%S}] form {key} → {target}", flush=True)
+        return applied
+
     def record_orders(self, context, now):
         """Record every order whose market gate holds; announce each one."""
 
@@ -433,6 +477,7 @@ class Pilot:
         roll_date(self.state, now)
         view = self._api("GET", f"/environments/{self.environment}")
         context = view.get("context") or {}
+        self.apply_forms(context, now)
         audited = self.audit(context, now)
         if audited:
             print(f"[{utc_now():%H:%M:%S}] audit: {len(audited)} case(s) "

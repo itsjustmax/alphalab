@@ -601,3 +601,70 @@ def test_indices_stream_as_indices_not_stocks():
     nvda = [r for r in requests if r.get("symbol") == "NVDA"]
     assert spx and all(r.get("sec_type") == "IND" for r in spx)
     assert nvda and all("sec_type" not in r for r in nvda)
+
+
+# -- forms: minimal fields in, finished cells out ------------------------------
+
+def test_the_live_desks_object_contract_normalizes_through_the_form():
+    import forms
+
+    # The exact shape that broke the live desk: a structured contract
+    # where a string belongs. The form lane coerces it.
+    trade, violations = forms.trade_from_form({
+        "contracts": [{"symbol": "NVDA", "sec_type": "OPT",
+                       "expiration": "20260821", "strike": 235, "right": "C"}],
+        "thesis": "negative gamma amplifies an NVDA push",
+        "invalidation": "regime flips positive on two receipts",
+    })
+    assert violations == []
+    assert trade["contracts"] == ["NVDA 20260821 235C"]
+    assert trade["state"] == "idea"
+
+
+def test_a_bad_trade_form_names_its_problems_teachably():
+    import forms
+
+    trade, violations = forms.trade_from_form({"contracts": [123],
+                                               "thesis": "t"})
+    assert any('like "NVDA 20260821 235C"' in v for v in violations)
+    assert any("prove it wrong" in v for v in violations)
+
+
+def test_templates_expand_minimal_fields_into_finished_cells():
+    import forms
+
+    target, cell, violations = forms.expand(
+        {"template": "live-chart", "id": "nvda", "symbol": "NVDA"})
+    assert violations == []
+    assert target == "widgets/chart-nvda"
+    assert cell["chart"] == {"symbol": "NVDA", "days": 60}
+    assert cell["title"] == "NVDA — daily"
+    target, cell, violations = forms.expand(
+        {"template": "paper-order", "trade": "nvda-gamma-call",
+         "symbol": "NVDA", "expiration": "20260821", "strike": 235,
+         "right": "C", "price": 1.05, "quantity": 1})
+    assert target == "widgets/fill-nvda-gamma-call"
+    assert cell["refresh"]["args"]["contract"] == "NVDA 20260821 235C"
+    assert cell["refresh"]["args"]["action"] == "buy"
+
+
+def test_a_form_missing_fields_or_template_is_named():
+    import forms
+
+    _, _, violations = forms.expand({"template": "live-chart", "id": "x"})
+    assert any("still needs: symbol" in v for v in violations)
+    _, _, violations = forms.expand({"template": "nope"})
+    assert any("no template named" in v for v in violations)
+
+
+def test_desk_templates_extend_the_builtins():
+    import forms
+
+    target, cell, violations = forms.expand(
+        {"template": "my-note", "id": "x", "body": "hello"},
+        templates={"my-note": {"target": "widgets/note-{id}",
+                               "fields": {"id": "slug", "body": "text"},
+                               "cell": {"kind": "text", "title": "Note",
+                                        "body": {"$": "body"}}}})
+    assert violations == []
+    assert target == "widgets/note-x" and cell["body"] == "hello"

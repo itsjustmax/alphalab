@@ -133,8 +133,14 @@ def trade_violations(trade):
                 or any(not (isinstance(item, str) and item.strip()
                             and len(item) <= 120)
                        for item in contracts)):
+            got = ("nothing" if not isinstance(contracts, list)
+                   else ", ".join(type(item).__name__ for item in contracts[:5])
+                   or "an empty list")
             violations.append(
-                "a trade names one through five exact contracts")
+                "a trade names one through five exact contracts as plain "
+                'strings — like "NVDA 20260821 235C" — but got: ' + got +
+                " (write forms/trade/<id> with minimal fields and the desk "
+                "assembles the cell for you)")
             contracts = []
     else:
         contracts = []

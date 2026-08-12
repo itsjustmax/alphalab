@@ -647,7 +647,6 @@ function renderWatchlist(view) {
     chip._fold = chipFocus(`watchlist/${symbol}`, chip, symbol);
     chip.append(chip._fold);
     strip.append(chip);
-    fillTick(chip, symbol);
   }
   return section.appendChild(strip), section;
 }
@@ -701,51 +700,81 @@ function applyTick(chip, quote) {
   return true;
 }
 let tickLoopStarted = false;
+const quietUntil = {};   // symbols with no ticks probe out-of-band once a
+                         // minute — a slow lane never blocks the live ones
+const probing = new Set();
+function probeQuiet(symbol, chip) {
+  if (probing.has(symbol)) return;
+  probing.add(symbol);
+  api("POST", `/environments/${envId}/tools/live_quotes`,
+      {args: {symbols: [symbol], warm: true}})
+    .then(reply => {
+      const quote = reply.result?.data?.quotes?.[symbol];
+      const live = document.querySelector(
+        `.tick[data-symbol="${symbol}"]`) || chip;
+      if (applyTick(live, quote)) {
+        delete quietUntil[symbol];
+        (tickLoop.live = tickLoop.live || new Set()).add(symbol);
+      } else {
+        quietUntil[symbol] = Date.now() + 60_000;
+        fillTick(live, symbol);
+      }
+    })
+    .catch(() => { quietUntil[symbol] = Date.now() + 60_000; })
+    .finally(() => probing.delete(symbol));
+}
 async function tickLoop() {
   if (tickLoopStarted) return;
   tickLoopStarted = true;
-  const fallbackDone = new Set();
-  const quietUntil = {};   // symbols with no ticks re-check once a minute,
-                           // not every cycle — a quiet lane must not slow
-                           // the live ones down
   while (true) {
+    window._tickBeat = Date.now();
     const chips = [...document.querySelectorAll(".tick[data-symbol]")];
     if (!chips.length) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       continue;
     }
     const now = Date.now();
-    const symbols = [...new Set(chips.map(chip => chip.dataset.symbol))]
-      .filter(symbol => (quietUntil[symbol] || 0) <= now);
-    let quotes = {};
-    if (symbols.length) {
-      try {
-        // The first cycle warms quiet streams (slow, once); after that
-        // the loop is a single fast batched read.
-        const warm = !tickLoop.warmed;
-        tickLoop.warmed = true;
-        const reply = await api("POST",
-          `/environments/${envId}/tools/live_quotes`,
-          {args: {symbols, warm}});
-        quotes = reply.result?.data?.quotes || {};
-      } catch (error) { /* the loop keeps its own pace */ }
-    }
+    const live = [];
     for (const chip of chips) {
       const symbol = chip.dataset.symbol;
-      if (!(symbol in quotes)) continue;
-      if (applyTick(chip, quotes[symbol])) {
-        delete quietUntil[symbol];
-      } else {
-        quietUntil[symbol] = Date.now() + 60_000;
-        if (!fallbackDone.has(symbol)) {
-          fallbackDone.add(symbol);
-          fillTick(chip, symbol);
+      if ((quietUntil[symbol] || 0) > now) continue;
+      // Proven-live symbols ride the fast batch; anything else probes
+      // out-of-band (with warm-up) so slow paths never stall the loop.
+      if (applyTickReady(symbol)) live.push(symbol);
+      else probeQuiet(symbol, chip);
+    }
+    if (live.length) {
+      try {
+        const controller = new AbortController();
+        const stop = setTimeout(() => controller.abort(), 20_000);
+        const response = await fetch(`/environments/${envId}/tools/live_quotes`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({args: {symbols: live}}),
+          signal: controller.signal,
+        });
+        clearTimeout(stop);
+        const reply = await response.json();
+        const quotes = reply.result?.data?.quotes || {};
+        for (const chip of chips) {
+          const symbol = chip.dataset.symbol;
+          if (!(symbol in quotes)) continue;
+          if (applyTick(chip, quotes[symbol])) {
+            tickLoop.live = tickLoop.live || new Set();
+            tickLoop.live.add(symbol);
+          } else {
+            quietUntil[symbol] = Date.now() + 60_000;
+            fillTick(chip, symbol);
+          }
         }
-      }
+      } catch (error) { /* the loop keeps its own pace */ }
     }
     await new Promise(resolve =>
-      setTimeout(resolve, symbols.length ? 350 : 2000));
+      setTimeout(resolve, live.length ? 350 : 2000));
   }
+}
+function applyTickReady(symbol) {
+  return tickLoop.live?.has(symbol) ?? false;
 }
 tickLoop();
 

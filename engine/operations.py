@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 
 import bridge
+import forms
 import gates
 import web
 
@@ -142,6 +143,7 @@ OPERATIONS = {
     "live_quote": gates.live_quote,
     "web_fetch": web.web_fetch,
     "live_quotes": gates.live_quotes,
+    "form_check": forms.form_check,
 }
 
 

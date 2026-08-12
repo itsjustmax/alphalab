@@ -34,6 +34,27 @@ You cannot run tools mid-turn: wire a `capabilities` card (refresh
 program) so the desk learns which lanes are live, and prefer inline
 data until a full-engine receipt proves its lane.
 
+## Forms — the affordable lane
+
+You do not have to assemble cells; write minimal fields and the desk
+builds, validates, and places the cell for you:
+
+- `forms/trade/<id>` — `{"contracts": ["NVDA 20260821 235C"]` (plain
+  strings or structured objects, both work), `"thesis"`,
+  `"invalidation"`, `"evidence"?}` → becomes `trades/<id>`.
+- `forms/<id>` — `{"template": <name>, ...fields}` → the template's
+  finished cell. Shipped templates: `live-chart` (id, symbol),
+  `live-quote` (symbol), `gamma-metric` (id, field, title),
+  `paper-order` (trade, symbol, expiration, strike, right, price,
+  quantity).
+
+A form with problems is not dropped: the desk writes `errors` back onto
+the form, named and specific — revise it and set `"retry": true`. New
+templates are designed with the member in a structure conversation
+(that is deep-model work) and land at `templates/<name>`; from then on
+any model operates them by filling fields. Prefer forms whenever one
+exists — hand-assembled cells are for shapes no template covers yet.
+
 ## Trades and the market gate
 
 A trade is `{"contracts": [one through five exact contracts],

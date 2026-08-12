@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -14,7 +14,9 @@
     "desk/audit": "the autopilot's latest gate audit of every trade: {clean, cases_checked, violations, as_of} — if it names violations, fixing them is the next turn's first job",
     "widgets/": "the desk: one declarative card per key (widgets convention)",
     "widgets/brief": "the pinned Today card: what the desk is doing and what needs eyes",
-    "trades/": "one key per trade: {contracts: [1-5 exact contracts], thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill stays null until the market gate passes — the autopilot records a supported order's exact receipt block {contract, price, bid, ask, quantity, observed_at}; agents never write fill blocks and carry existing ones through unchanged. exit: same shape, closed trades only. The audit (desk/audit) verdicts every trade after each change."
+    "trades/": "one key per trade: {contracts: [1-5 exact contracts], thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill stays null until the market gate passes — the autopilot records a supported order's exact receipt block {contract, price, bid, ask, quantity, observed_at}; agents never write fill blocks and carry existing ones through unchanged. exit: same shape, closed trades only. The audit (desk/audit) verdicts every trade after each change.",
+    "forms/": "minimal fields the desk expands into finished cells: forms/trade/<id> {contracts, thesis, invalidation} → trades/<id>; forms/<id> {template, ...fields} → the template's cell. Problems come back as `errors` on the form itself; revise and set retry: true.",
+    "templates/": "desk-designed cell blueprints (deep-model work, done once): {target, fields, cell with {\"$\": field} placeholders} — extend the shipped templates; any model then operates them via forms/"
   },
   "tools": [
     {
@@ -63,6 +65,19 @@
         "python3",
         "tools/run.py",
         "live_quotes"
+      ]
+    },
+    {
+      "name": "form_check",
+      "description": "Validate or expand one form without writing anything: a trade form answers the normalized trade; a template form answers {target, cell}. Violations are named and teachable. data: {trade|target+cell, violations}.",
+      "args": {
+        "form": "the form value to check",
+        "templates": "optional desk templates map"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "form_check"
       ]
     },
     {

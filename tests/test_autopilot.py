@@ -352,3 +352,33 @@ def test_watchlist_streams_are_held_not_swept(tmp_path):
     stopped = pilot.sweep_streams(context)
     assert stopped == 1
     assert stops == ["s-orphan"]  # SPX (index) and NVDA both held
+
+
+def test_forms_become_cells_and_bad_forms_learn_their_errors(tmp_path):
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    writes = {}
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/context") and body:
+            writes[body["key"]] = body["value"]
+            return {"ok": True}
+        return {"ok": True, "result": {"ok": True, "data": {}}}
+
+    pilot._api = fake_api
+    context = {
+        "forms/trade/spread": {
+            "contracts": [{"symbol": "NVDA", "sec_type": "OPT",
+                           "expiration": "20260821", "strike": 235,
+                           "right": "C"}],
+            "thesis": "t", "invalidation": "break named"},
+        "forms/chart-amd": {"template": "live-chart", "id": "amd",
+                            "symbol": "AMD"},
+        "forms/broken": {"template": "live-chart", "id": "x"},
+    }
+    applied = pilot.apply_forms(context, RTH)
+    assert applied == 2
+    assert writes["trades/spread"]["contracts"] == ["NVDA 20260821 235C"]
+    assert writes["forms/trade/spread"] is None          # form retired
+    assert writes["widgets/chart-amd"]["chart"]["symbol"] == "AMD"
+    assert "still needs: symbol" in writes["forms/broken"]["errors"][0]
