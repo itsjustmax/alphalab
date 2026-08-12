@@ -34,6 +34,7 @@ import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "engine"))
 import forms  # noqa: E402  (minimal fields in, finished cells out)
 import gates  # noqa: E402  (ET, parse_clock — one rulebook for clocks)
+import plans  # noqa: E402  (member-activated position management)
 
 MIN_GAP_SECONDS = 10 * 60
 DEFAULT_BUDGET = 36
@@ -99,6 +100,21 @@ def supported_orders(context, now):
         if recording:
             recordings.append(recording)
     return recordings
+
+
+def parse_contract_label(label):
+    """Canonical 'NVDA 20260821 235C' → live-lane contract args."""
+
+    text = str(label or "").strip()
+    tokens = text.split()
+    parsed = {"symbol": tokens[0].upper() if tokens else ""}
+    match = gates._STRIKE_RIGHT.search(text)
+    date = next((t for t in tokens if t.isdigit() and len(t) == 8), None)
+    if match and date:
+        parsed.update({"sec_type": "OPT", "expiration": date,
+                       "strike": float(match.group(1)),
+                       "right": match.group(2).upper()})
+    return parsed
 
 
 def is_order_card(key, card):
@@ -369,6 +385,28 @@ class Pilot:
             watchlist = watchlist.replace(",", " ").split()
         for symbol in (watchlist or []):
             armed.append({"symbol": str(symbol).strip().upper()})
+        # Active plans hold the streams their declared inputs read, and
+        # every open position holds its own contract's stream (the PnL
+        # mark) — a plan mid-trail must never lose its eyes.
+        for key, plan in (context or {}).items():
+            if not key.startswith("plans/") or not isinstance(plan, dict):
+                continue
+            if plan.get("status") != "active":
+                continue
+            for declaration in ((plan.get("program") or {})
+                                .get("inputs") or []):
+                if isinstance(declaration, dict) \
+                        and isinstance(declaration.get("args"), dict) \
+                        and declaration["args"].get("symbol"):
+                    armed.append(declaration["args"])
+        for key, trade in (context or {}).items():
+            if not key.startswith("trades/") or not isinstance(trade, dict):
+                continue
+            if trade.get("state") != "open-simulated":
+                continue
+            fill_contract = (trade.get("fill") or {}).get("contract")
+            if fill_contract:
+                armed.append(parse_contract_label(str(fill_contract)))
         try:
             reply = self._api(
                 "POST", f"/environments/{self.environment}/tools/market_stream",
@@ -445,6 +483,130 @@ class Pilot:
             print(f"[{utc_now():%H:%M:%S}] form {key} → {target}", flush=True)
         return applied
 
+    def manage_plans(self, context, now):
+        """Run every ACTIVE plan's decision program against fresh inputs.
+
+        The member activated the plan after inspecting its code and test
+        results; this pass only gathers the declared read-only inputs,
+        runs the pure decision function, and routes its bounded actions
+        through the same order cards and market gate as every other fill
+        on this desk. Watermarks and ratchet levels persist as the plan's
+        own state between passes.
+        """
+
+        ran = 0
+        for key, plan in sorted((context or {}).items()):
+            if not key.startswith("plans/") or not isinstance(plan, dict):
+                continue
+            if plan.get("status") != "active":
+                continue
+            trade_id = key[len("plans/"):]
+            trade = (context or {}).get(f"trades/{trade_id}")
+            if not isinstance(trade, dict) \
+                    or trade.get("state") != "open-simulated":
+                continue
+            program = plan.get("program") or {}
+            if plans.program_violations(program):
+                continue  # named by plan_check; a broken program never runs
+            fill = trade.get("fill") or {}
+            inputs = {"position": {"entry": fill.get("price"),
+                                   "quantity": fill.get("quantity"),
+                                   "contract": fill.get("contract")},
+                      "now": now.astimezone(gates.ET)
+                                .isoformat(timespec="seconds")}
+            blind = False
+            for declaration in program.get("inputs") or []:
+                try:
+                    reply = self._api(
+                        "POST",
+                        f"/environments/{self.environment}/tools/"
+                        f"{declaration.get('tool')}",
+                        {"args": declaration.get("args") or {}})
+                    inputs[str(declaration["name"])] = \
+                        (reply.get("result") or {}).get("data")
+                except Exception:
+                    blind = True
+                    break
+            if blind:
+                continue  # inputs return next pass; never decide blind
+            result, error = plans.run_decision(
+                program.get("code") or "", inputs, plan.get("state"))
+            update = dict(plan)
+            update["last_run"] = now.isoformat(timespec="seconds")
+            if error:
+                update["last_error"] = error
+            else:
+                update.pop("last_error", None)
+                update["state"] = result["state"]
+                for action in result["actions"]:
+                    self._apply_plan_action(trade_id, trade, action,
+                                            context, update)
+            stale = gates.parse_clock(plan.get("last_run"))
+            changed = (update.get("state") != plan.get("state")
+                       or update.get("last_error") != plan.get("last_error")
+                       or update.get("last_note") != plan.get("last_note"))
+            if changed or stale is None \
+                    or (now - stale).total_seconds() >= 300:
+                self._api("POST",
+                          f"/environments/{self.environment}/context",
+                          {"key": key, "value": update})
+            if error:
+                print(f"[{utc_now():%H:%M:%S}] plan {key}: {error}",
+                      flush=True)
+            else:
+                ran += 1
+        return ran
+
+    def _apply_plan_action(self, trade_id, trade, action, context, update):
+        """One bounded plan action → the desk's existing primitives."""
+
+        kind = action["action"]
+        card_key = f"widgets/fill-{trade_id}-exit"
+        label = str((trade.get("fill") or {}).get("contract") or trade_id)
+        if kind == "note":
+            text = str(action.get("text") or "").strip()
+            if text and text != update.get("last_note"):
+                update["last_note"] = text
+                self._api("POST",
+                          f"/environments/{self.environment}/say",
+                          {"text": f"[plan {trade_id}] {text}"})
+            return
+        if kind == "cancel_exit":
+            if context.get(card_key) is not None:
+                self._api("POST",
+                          f"/environments/{self.environment}/context",
+                          {"key": card_key, "value": None})
+                print(f"[{utc_now():%H:%M:%S}] plan {trade_id}: "
+                      "exit order cancelled", flush=True)
+            return
+        # close = a marketable sell: a 0.01 limit executes AT the bid
+        # through the same gate as every fill; place_exit rests a limit.
+        price = 0.01 if kind == "close" else round(float(action["price"]), 2)
+        existing = ((context.get(card_key) or {})
+                    .get("refresh") or {}).get("args") or {}
+        if existing.get("price") == price \
+                and existing.get("action") == "sell":
+            return  # the desired exit is already working
+        quantity = int((trade.get("fill") or {}).get("quantity") or 1)
+        card = {"kind": "order",
+                "title": f"Plan exit — {label}",
+                "plan": f"plans/{trade_id}",
+                "refresh": {"tool": "fill_watch",
+                            "args": {**parse_contract_label(label),
+                                     "price": price, "quantity": quantity,
+                                     "action": "sell", "contract": label},
+                            "minutes": 2, "value_path": "result.data",
+                            "into": "check"}}
+        self._api("POST", f"/environments/{self.environment}/context",
+                  {"key": card_key, "value": card})
+        self._api("POST", f"/environments/{self.environment}/say",
+                  {"text": f"[plan {trade_id}] "
+                   + ("closing at the market (sell limit $0.01 executes "
+                      "at the bid)" if kind == "close"
+                      else f"exit limit now working at ${price:g}")})
+        print(f"[{utc_now():%H:%M:%S}] plan {trade_id}: {kind} "
+              f"@ ${price:g}", flush=True)
+
     def record_orders(self, context, now):
         """Record every order whose market gate holds; announce each one."""
 
@@ -483,6 +645,7 @@ class Pilot:
             print(f"[{utc_now():%H:%M:%S}] audit: {len(audited)} case(s) "
                   f"broken — {', '.join(sorted(audited))}", flush=True)
         self.record_orders(context, now)
+        self.manage_plans(context, now)
         self.sweep_streams(context)
         action, reason = decide(context, self.state, now, self.budget)
         if action == "build":

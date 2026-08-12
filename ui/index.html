@@ -150,6 +150,31 @@
                     text-transform: uppercase; letter-spacing: .08em; }
   .fill-line { font-family: var(--mono); font-size: .8rem; }
   .violation { color: var(--down); font-size: .82rem; margin: .3rem 0 0; }
+  td.up, p.up { color: var(--up); } td.down { color: var(--down); }
+  .plan-row { border: 1px solid var(--border); border-radius: 10px;
+    padding: .7rem .85rem; margin: .55rem 0; background: var(--surface); }
+  .plan-head { display: flex; align-items: center; gap: .6rem; }
+  .plan-words { font-style: italic; margin: .45rem 0 .2rem;
+    color: var(--text); }
+  .plan-state { font-family: var(--mono); font-size: .74rem;
+    color: var(--muted); margin: .2rem 0; }
+  .plan-ask { display: flex; gap: .5rem; margin-top: .5rem; }
+  .plan-ask input { flex: 1; background: var(--surface-2);
+    color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+    padding: .45rem .6rem; font: inherit; font-size: .84rem; }
+  .plan-buttons { display: flex; gap: .5rem; margin-top: .55rem;
+    flex-wrap: wrap; }
+  .plan-buttons button, .plan-ask button { background: var(--surface-2);
+    color: var(--text); border: 1px solid var(--border-strong);
+    border-radius: 8px; padding: .4rem .75rem; font: inherit;
+    font-size: .8rem; cursor: pointer; }
+  .plan-buttons button:hover, .plan-ask button:hover {
+    border-color: var(--accent); }
+  .plan-buttons button[disabled] { opacity: .45; cursor: not-allowed; }
+  .s-plan-active { border-color: var(--up); color: var(--up); }
+  .s-plan-draft { border-color: var(--accent); color: var(--accent); }
+  .s-plan-requested { border-color: var(--warn); color: var(--warn); }
+  .s-plan-paused, .s-plan-unmanaged { color: var(--muted); }
   .choices { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0; }
   .choices button { font-size: .85rem; }
   .choices button.selected { border-color: var(--accent); color: var(--accent); }
@@ -556,6 +581,7 @@ function render(view) {
   for (const section of [
     renderWatchlist(view),
     renderPositions(view),
+    renderManagement(view),
     Object.keys(view.context).some(k => k.startsWith("trades/"))
       ? renderTrades(view) : null,
     renderWidgets(view),
@@ -787,7 +813,7 @@ function renderPositions(view) {
   section.append(el("h2", {}, "Positions — simulated, paper only"));
   const table = el("table");
   const head = el("tr");
-  for (const column of ["contract", "state", "entry",
+  for (const column of ["contract", "state", "entry", "pnl from entry",
                         "exit / result", "underlying (EOD)", "invalidation"])
     head.append(el("td", {class: "key"}, column));
   table.append(head);
@@ -806,6 +832,22 @@ function renderPositions(view) {
       ? `${f.quantity} @ $${f.price} (${f.bid}×${f.ask}) · ` +
         String(f.observed_at).slice(0, 10)
       : "—"));
+    const pnl = el("td", {class: "val"}, "—");
+    const held = contractLabel((c.fill || {}).contract
+      || (c.contracts || [])[0] || "");
+    if (c.state === "open-simulated" && f && held) {
+      pnl.textContent = "…";
+      pnlWatch.set(key, {cell: pnl, entry: f.price,
+                         quantity: f.quantity || 1, label: held});
+      paintPnlSoon();
+    } else if (c.exit && f) {
+      const mult = /\d+(?:\.\d+)?[CP]\b/i.test(held) ? 100 : 1;
+      const dollars = (c.exit.price - f.price) * (f.quantity || 1) * mult;
+      pnl.textContent = `${dollars >= 0 ? "+" : "−"}$` +
+        `${Math.abs(dollars).toFixed(2)} realized`;
+      pnl.className = "val " + (dollars >= 0 ? "up" : "down");
+    }
+    line.append(pnl);
     let result = c.state === "open-simulated" ? "open" : "—";
     if (c.exit && f) {
       const diff = c.exit.price - f.price;
@@ -833,6 +875,213 @@ function renderPositions(view) {
   }
   section.append(table);
   return section;
+}
+
+// ---- Position PnL, live from the contract's own stream ------------
+// The mark is the BID — what the position would liquidate at right now,
+// the honest number for a long. Every paint carries the tick's clock.
+const pnlWatch = new Map();
+let pnlTimer = null;
+function paintPnlSoon() {
+  if (!pnlTimer) pnlTimer = setTimeout(pnlLoop, 50);
+}
+async function pnlLoop() {
+  pnlTimer = null;
+  for (const [key, watch] of pnlWatch) {
+    if (!watch.cell.isConnected) { pnlWatch.delete(key); continue; }
+    const args = contractArgs(watch.label);
+    const receipt = await toolData("live_quote", args, 0.2);
+    const quote = receipt?.ok && receipt.data?.quote;
+    const mark = quote && (typeof quote.bid === "number" && quote.bid > 0
+      ? quote.bid : (typeof quote.last === "number" ? quote.last : null));
+    if (mark == null) {
+      watch.cell.textContent = "no live mark";
+      watch.cell.className = "val muted";
+      watch.cell.title = (receipt?.gaps || []).join("; ") ||
+        "the stream has not printed a tick yet";
+      continue;
+    }
+    const mult = args.sec_type === "OPT" ? 100 : 1;
+    const dollars = (mark - watch.entry) * watch.quantity * mult;
+    const pct = watch.entry ? 100 * (mark - watch.entry) / watch.entry : 0;
+    watch.cell.textContent =
+      `${dollars >= 0 ? "+" : "−"}$${Math.abs(dollars).toFixed(2)} ` +
+      `(${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%) · mark $${mark}`;
+    watch.cell.className = "val " + (dollars >= 0 ? "up" : "down");
+    watch.cell.title = `bid-side mark, streaming as of ` +
+      `${quote.observed_at || "?"} · entry $${watch.entry}`;
+  }
+  if (pnlWatch.size) pnlTimer = setTimeout(pnlLoop, 15000);
+}
+function contractArgs(label) {
+  const text = contractLabel(label);
+  const tokens = text.trim().split(/\s+/);
+  const args = {symbol: (tokens[0] || "").toUpperCase()};
+  const date = tokens.find(t => /^\d{8}$/.test(t));
+  const strikeRight = text.match(/(\d+(?:\.\d+)?)\s*([CP])\b/i);
+  if (date && strikeRight)
+    Object.assign(args, {sec_type: "OPT", expiration: date,
+      strike: parseFloat(strikeRight[1]),
+      right: strikeRight[2].toUpperCase()});
+  return args;
+}
+
+// ---- Position management: the member's plan, the agent's program ----
+// The member says how a position should be managed, in plain words. An
+// agent compiles that into a program — declared read-only inputs, a pure
+// decision function, its own tests. NOTHING runs until the member opens
+// the inspection modal, reads the explanation and the test results, and
+// activates it. Draft is the agent's ceiling; active is the member's.
+function renderManagement(view) {
+  const open = Object.entries(view.context).filter(([key, c]) =>
+    key.startsWith("trades/") && c && c.state === "open-simulated");
+  if (!open.length) return null;
+  const section = el("section", {class: "full"});
+  section.append(el("h2", {}, "Position management"));
+  for (const [tradeKey, trade] of open) {
+    const id = tradeKey.slice(7);
+    const plan = view.context[`plans/${id}`];
+    const row = el("div", {class: "plan-row"});
+    const head = el("div", {class: "plan-head"});
+    head.append(el("b", {}, contractLabel((trade.fill || {}).contract
+      || (trade.contracts || [])[0] || id)));
+    const status = plan?.status || "unmanaged";
+    head.append(el("span", {class: `state s-plan-${status}`}, status));
+    if (plan) head.append(focusChip(`plans/${id}`, plan));
+    row.append(head);
+    if (!plan) {
+      const ask = el("div", {class: "plan-ask"});
+      const line = el("input", {type: "text", placeholder:
+        "How should this position be managed? e.g. “trail a stop 1.0 " +
+        "below the high once we’re +100%, and close by 8/21 2pm ET”"});
+      const send = el("button", {type: "button"}, "request a plan");
+      send.addEventListener("click", () => requestPlan(id, line.value));
+      line.addEventListener("keydown", event => {
+        if (event.key === "Enter") requestPlan(id, line.value);
+      });
+      ask.append(line, send);
+      row.append(ask);
+    } else {
+      row.append(el("p", {class: "plan-words"}, `“${plan.plan || "—"}”`));
+      if (plan.status === "requested")
+        row.append(el("p", {class: "muted"},
+          "waiting for the desk to compile a program…"));
+      if (plan.last_error)
+        row.append(el("p", {class: "violation"}, `⚠ ${plan.last_error}`));
+      if (plan.state && Object.keys(plan.state).length)
+        row.append(el("p", {class: "plan-state"},
+          "program state: " + JSON.stringify(plan.state)));
+      const buttons = el("div", {class: "plan-buttons"});
+      if (plan.program) {
+        const inspect = el("button", {type: "button"},
+          plan.status === "active" ? "inspect" : "inspect & activate");
+        inspect.addEventListener("click", () => openPlanModal(id));
+        buttons.append(inspect);
+      }
+      if (plan.status === "active") {
+        const pause = el("button", {type: "button"}, "pause");
+        pause.addEventListener("click", () => setPlanStatus(id, "paused"));
+        buttons.append(pause);
+      } else if (plan.status === "paused" && plan.program) {
+        const resume = el("button", {type: "button"}, "resume");
+        resume.addEventListener("click", () => openPlanModal(id));
+        buttons.append(resume);
+      }
+      row.append(buttons);
+      if (plan.last_run) row.append(el("div", {class: "as-of"},
+        `last run ${plan.last_run}`));
+    }
+    section.append(row);
+  }
+  return section;
+}
+
+async function requestPlan(id, words) {
+  const plan = String(words || "").trim();
+  if (!plan) return;
+  await api("POST", `/environments/${envId}/context`, {
+    key: `plans/${id}`,
+    value: {plan, status: "requested",
+            requested_at: new Date().toISOString().slice(0, 19) + "+00:00"}});
+  await markMemberTurn();
+  const model = chosenModel("plan");
+  await api("POST", `/environments/${envId}/build`, model ? {model} : {});
+  turnActive = true;
+  turnStarted = Date.now();
+  refresh();
+}
+
+async function setPlanStatus(id, status) {
+  const plan = lastView?.context?.[`plans/${id}`];
+  if (!plan) return;
+  await api("POST", `/environments/${envId}/context`, {
+    key: `plans/${id}`, value: {...plan, status,
+      [`${status}_at`]: new Date().toISOString().slice(0, 19) + "+00:00"}});
+  await markMemberTurn();
+  document.getElementById("trade-modal").hidden = true;
+  refresh();
+}
+
+function openPlanModal(id) {
+  const plan = lastView?.context?.[`plans/${id}`] || {};
+  const program = plan.program || {};
+  document.getElementById("trade-modal-title").textContent =
+    `management plan · ${id.replace(/-/g, " ")}`;
+  const body = document.getElementById("trade-modal-body");
+  body.replaceChildren();
+  body.append(el("div", {class: "section-label"}, "The plan, in your words"));
+  body.append(el("p", {}, `“${plan.plan || "—"}”`));
+  body.append(el("div", {class: "section-label"},
+    "How the desk will manage it"));
+  body.append(el("p", {}, program.explanation || "no explanation yet"));
+  body.append(el("div", {class: "section-label"}, "Data it watches"));
+  for (const input of program.inputs || [])
+    body.append(el("p", {class: "fill-line"},
+      `${input.name} ← ${input.tool} ${JSON.stringify(input.args || {})}`));
+  if (!(program.inputs || []).length)
+    body.append(el("p", {class: "muted"},
+      "only the position itself and the clock"));
+  body.append(el("div", {class: "section-label"}, "The decision program"));
+  body.append(el("pre", {class: "data-body"}, program.code || "—"));
+  body.append(el("div", {class: "section-label"}, "Validation"));
+  const verdicts = el("div");
+  verdicts.append(el("p", {class: "muted"}, "running the plan’s tests…"));
+  body.append(verdicts);
+  const buttons = el("div", {class: "plan-buttons"});
+  body.append(buttons);
+  toolData("plan_check", {plan: {program}}, 0).then(receipt => {
+    verdicts.replaceChildren();
+    const tests = receipt?.data?.tests || [];
+    for (const test of tests)
+      verdicts.append(el("p", {class: test.passed ? "up" : "violation"},
+        `${test.passed ? "✓" : "✗"} ${test.name} — ${test.detail}`));
+    for (const problem of receipt?.data?.violations || [])
+      verdicts.append(el("p", {class: "violation"}, `⚠ ${problem}`));
+    if (!tests.length && !(receipt?.data?.violations || []).length)
+      verdicts.append(el("p", {class: "violation"},
+        "⚠ plan_check did not answer — " +
+        (receipt?.summary || "no verdict, no activation")));
+    const passed = !!receipt?.data?.passed;
+    if (plan.status !== "active") {
+      const activate = el("button", {type: "button",
+        ...(passed ? {} : {disabled: "disabled",
+          title: "tests must pass before this plan can run"})},
+        "activate — the desk manages this position");
+      activate.addEventListener("click", () => setPlanStatus(id, "active"));
+      buttons.append(activate);
+    } else {
+      const pause = el("button", {type: "button"}, "pause this plan");
+      pause.addEventListener("click", () => setPlanStatus(id, "paused"));
+      buttons.append(pause);
+    }
+    const revise = el("button", {type: "button"}, "revise with the desk");
+    revise.addEventListener("click", () => {
+      document.getElementById("trade-modal").hidden = true;
+      openFocus(`plans/${id}`, "structure");
+    });
+    buttons.append(revise);
+  });
+  document.getElementById("trade-modal").hidden = false;
 }
 
 function renderFindings(view) {

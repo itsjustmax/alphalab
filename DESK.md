@@ -75,6 +75,19 @@ advances, the card retires, and the recording is announced in the
 conversation. Asks (kind "ask") are reserved for the member's own
 decisions: direction, risk, what to pursue or drop.
 
+The Position management section renders one row per open position from
+`plans/<trade-id>`: the member's plan words, its status, and the
+program's live state. The member requests a plan in their own words
+(status "requested" — the desk compiles it to a draft program), then
+inspects it in a modal — explanation, declared inputs, the decision
+code, and `plan_check`'s live test verdicts — before the activate
+button will run it. Activate/pause are member-only moves made here;
+the autopilot runs active plans each pass and routes their actions
+through the same order cards and market gate as everything else. The
+positions table marks every open position live from its own contract's
+stream: PnL from entry at the bid — the liquidation side — with the
+tick's clock in the tooltip.
+
 `desk/member_turn` is stamped by this client whenever the member fires a
 turn — the autopilot yields to it. `desk/next_check`, `desk/focus`, and `desk/autopilot` are the unassisted
 loop's keys: the agent schedules itself with the first two; the

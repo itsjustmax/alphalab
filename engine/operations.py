@@ -15,6 +15,7 @@ import urllib.request
 import bridge
 import forms
 import gates
+import plans
 import web
 
 
@@ -144,6 +145,7 @@ OPERATIONS = {
     "web_fetch": web.web_fetch,
     "live_quotes": gates.live_quotes,
     "form_check": forms.form_check,
+    "plan_check": plans.plan_check,
 }
 
 
