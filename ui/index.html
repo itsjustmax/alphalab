@@ -38,7 +38,11 @@
   header .controls { margin-left: auto; display: flex; gap: .5rem;
                      align-items: center; }
   #desk-name { color: var(--muted); font-size: .95rem;
-    font-weight: 500; align-self: center; }
+    font-weight: 500; align-self: center; cursor: text; min-width: 1rem; }
+  #desk-name:hover { color: var(--text); }
+  #desk-name input { background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--accent); border-radius: 6px; font: inherit;
+    padding: .1rem .4rem; width: 14rem; }
   #desk-switch { position: relative; }
   #desks-link { color: var(--muted); font-size: .78rem;
     background: none; cursor: pointer; font-family: inherit;
@@ -140,6 +144,8 @@
           padding: .4rem .7rem; font-size: .86rem; background: var(--surface-2);
           font-family: var(--mono); }
   .tick .up { color: var(--up); } .tick .down { color: var(--down); }
+  .tick-stale { color: var(--warn); font-size: .7rem; }
+  .tick.is-stale { border-color: var(--warn); opacity: .85; }
   .tick.broken { border-color: var(--down); color: var(--down); }
   .ok-line { color: var(--up); font-size: .85rem; margin: .3rem 0 0; }
   pre.data-body { font-size: .72rem; max-height: 14rem; overflow: auto;
@@ -393,16 +399,39 @@ async function deskLabel(id) {
     return {name: ctx["desk/name"] || "", detail: parts.join(" · ")};
   } catch { return {name: "", detail: "unreachable"}; }
 }
-async function renameDesk() {
+function renameDesk() {
+  // An inline editor, not window.prompt — the Mac client's WKWebView
+  // has no native dialogs, and inline is calmer anyway.
+  const holder = document.getElementById("desk-name");
+  if (holder.querySelector("input")) return;
   const current = lastView?.context?.["desk/name"] || "";
-  const name = window.prompt("Name this desk", current);
-  if (name === null) return;
-  await api("POST", `/environments/${envId}/context`,
-    {key: "desk/name", value: name.trim() || null});
-  document.getElementById("desk-name").textContent =
-    name.trim() ? `· ${name.trim()}` : "";
+  const input = el("input", {type: "text", id: "desk-name-input",
+    placeholder: "name this desk", value: current});
+  holder.replaceChildren(input);
+  input.focus();
+  input.select();
+  const done = async save => {
+    const name = input.value.trim();
+    holder.replaceChildren();
+    if (save) {
+      await api("POST", `/environments/${envId}/context`,
+        {key: "desk/name", value: name || null});
+      if (lastView) lastView.context["desk/name"] = name || undefined;
+    }
+    holder.textContent = (save ? name : current)
+      ? `· ${save ? name : current}` : "";
+  };
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") done(true);
+    if (event.key === "Escape") done(false);
+  });
+  input.addEventListener("blur", () => done(true));
   document.getElementById("desk-menu").hidden = true;
 }
+document.getElementById("desk-name").addEventListener("click", () => {
+  if (!document.getElementById("desk-name").querySelector("input"))
+    renameDesk();
+});
 async function openDeskMenu() {
   const menu = document.getElementById("desk-menu");
   if (!menu.hidden) { menu.hidden = true; return; }
@@ -718,8 +747,9 @@ function render(view) {
   prevConversationLength = view.conversation.length;
 
   document.getElementById("title").textContent = view.harness.name;
-  document.getElementById("desk-name").textContent =
-    view.context["desk/name"] ? `· ${view.context["desk/name"]}` : "";
+  if (!document.getElementById("desk-name").querySelector("input"))
+    document.getElementById("desk-name").textContent =
+      view.context["desk/name"] ? `· ${view.context["desk/name"]}` : "";
   renderIntake(view);
   updateLiveness();
 
@@ -732,7 +762,6 @@ function render(view) {
   for (const section of [
     renderWatchlist(view),
     renderPositions(view),
-    renderManagement(view),
     Object.keys(view.context).some(k => k.startsWith("trades/"))
       ? renderTrades(view) : null,
     renderWidgets(view),
@@ -896,6 +925,16 @@ function applyTick(chip, quote) {
     document.createTextNode(`${quote.last} `),
     el("span", {class: (pct ?? 0) >= 0 ? "up" : "down"},
       pct === null ? "" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% vs close`));
+  // An old tick is shown AS old — a stale number posing as live is the
+  // one thing this desk never does.
+  const clock = Date.parse(quote.observed_at);
+  const age = isNaN(clock) ? null : (Date.now() - clock) / 1000;
+  if (age !== null && age > 180) {
+    const minutes = Math.round(age / 60);
+    chip.append(el("span", {class: "tick-stale"},
+      ` stale ${minutes < 90 ? minutes + "m" : Math.round(minutes / 60) + "h"}`));
+    chip.classList.add("is-stale");
+  } else chip.classList.remove("is-stale");
   if (chip._fold) chip.append(chip._fold);
   chip.title = `streaming ${quote.bid} × ${quote.ask} · as of ` +
     `${quote.observed_at}`;
@@ -1132,19 +1171,46 @@ function managementCell(tradeKey, trade, view) {
   const head = el("div", {class: "mgmt-plan"});
   const chip = el("button", {type: "button",
     class: `state s-plan-${plan?.status || "unmanaged"} plan-chip`,
-    title: plan?.program ? "inspect this plan" : "write a plan below"},
+    title: plan?.program ? "inspect this plan"
+      : plan ? "the desk is compiling this plan" : "write a plan"},
     plan?.status || "no plan");
   chip.addEventListener("click", () => {
     if (plan?.program) openPlanModal(id);
-    else document.querySelector(".plan-row")?.scrollIntoView(
-      {behavior: "smooth", block: "center"});
   });
   head.append(chip);
+  if (plan?.status === "paused" && plan.program) {
+    const resume = el("button", {type: "button", class: "desk-rename"},
+      "resume");
+    resume.addEventListener("click", () => openPlanModal(id));
+    head.append(resume);
+  }
   cell.append(head);
   if (plan?.plan) cell.append(el("div", {class: "mgmt-words"},
     `“${String(plan.plan).slice(0, 160)}${plan.plan.length > 160 ? "…" : ""}”`));
+  if (plan?.status === "requested")
+    cell.append(el("div", {class: "muted"},
+      "waiting for the desk to compile a program…"));
   if (plan?.last_error)
     cell.append(el("div", {class: "violation"}, `⚠ ${plan.last_error}`));
+  if (!plan && trade.state === "open-simulated") {
+    const start = el("button", {type: "button", class: "desk-rename"},
+      "manage…");
+    start.addEventListener("click", () => {
+      const ask = el("div", {class: "plan-ask"});
+      const line = el("input", {type: "text", placeholder:
+        "how should this position be managed? e.g. “take 100%, trail " +
+        "1.0 below the high after that”"});
+      const send = el("button", {type: "button"}, "request");
+      send.addEventListener("click", () => requestPlan(id, line.value));
+      line.addEventListener("keydown", event => {
+        if (event.key === "Enter") requestPlan(id, line.value);
+      });
+      ask.append(line, send);
+      start.replaceWith(ask);
+      line.focus();
+    });
+    cell.append(start);
+  }
   if (trade.invalidation) {
     const inv = el("div", {class: "invalidation"});
     inv.append(el("b", {}, "invalidation "));
@@ -1160,69 +1226,6 @@ function managementCell(tradeKey, trade, view) {
 // decision function, its own tests. NOTHING runs until the member opens
 // the inspection modal, reads the explanation and the test results, and
 // activates it. Draft is the agent's ceiling; active is the member's.
-function renderManagement(view) {
-  const open = Object.entries(view.context).filter(([key, c]) =>
-    key.startsWith("trades/") && c && c.state === "open-simulated");
-  if (!open.length) return null;
-  const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "Position management"));
-  for (const [tradeKey, trade] of open) {
-    const id = tradeKey.slice(7);
-    const plan = view.context[`plans/${id}`];
-    const row = el("div", {class: "plan-row"});
-    const head = el("div", {class: "plan-head"});
-    head.append(el("b", {}, contractLabel((trade.fill || {}).contract
-      || (trade.contracts || [])[0] || id)));
-    const status = plan?.status || "unmanaged";
-    head.append(el("span", {class: `state s-plan-${status}`}, status));
-    if (plan) head.append(focusChip(`plans/${id}`, plan));
-    row.append(head);
-    if (!plan) {
-      const ask = el("div", {class: "plan-ask"});
-      const line = el("input", {type: "text", placeholder:
-        "How should this position be managed? e.g. “trail a stop 1.0 " +
-        "below the high once we’re +100%, and close by 8/21 2pm ET”"});
-      const send = el("button", {type: "button"}, "request a plan");
-      send.addEventListener("click", () => requestPlan(id, line.value));
-      line.addEventListener("keydown", event => {
-        if (event.key === "Enter") requestPlan(id, line.value);
-      });
-      ask.append(line, send);
-      row.append(ask);
-    } else {
-      row.append(el("p", {class: "plan-words"}, `“${plan.plan || "—"}”`));
-      if (plan.status === "requested")
-        row.append(el("p", {class: "muted"},
-          "waiting for the desk to compile a program…"));
-      if (plan.last_error)
-        row.append(el("p", {class: "violation"}, `⚠ ${plan.last_error}`));
-      if (plan.state && Object.keys(plan.state).length)
-        row.append(el("p", {class: "plan-state"},
-          "program state: " + JSON.stringify(plan.state)));
-      const buttons = el("div", {class: "plan-buttons"});
-      if (plan.program) {
-        const inspect = el("button", {type: "button"},
-          plan.status === "active" ? "inspect" : "inspect & activate");
-        inspect.addEventListener("click", () => openPlanModal(id));
-        buttons.append(inspect);
-      }
-      if (plan.status === "active") {
-        const pause = el("button", {type: "button"}, "pause");
-        pause.addEventListener("click", () => setPlanStatus(id, "paused"));
-        buttons.append(pause);
-      } else if (plan.status === "paused" && plan.program) {
-        const resume = el("button", {type: "button"}, "resume");
-        resume.addEventListener("click", () => openPlanModal(id));
-        buttons.append(resume);
-      }
-      row.append(buttons);
-      if (plan.last_run) row.append(el("div", {class: "as-of"},
-        `last run ${plan.last_run}`));
-    }
-    section.append(row);
-  }
-  return section;
-}
 
 async function requestPlan(id, words) {
   const plan = String(words || "").trim();
@@ -1919,6 +1922,25 @@ function customD3(spec) {
   return frame;
 }
 
+function normalizeZones(raw) {
+  const zones = [];
+  for (const row of Array.isArray(raw) ? raw : []) {
+    if (!row || typeof row !== "object") continue;
+    const lower = Number(row.lower ?? row.low ?? row.zone_low
+      ?? row.price_low ?? row.bottom);
+    const upper = Number(row.upper ?? row.high ?? row.zone_high
+      ?? row.price_high ?? row.top);
+    if (!isFinite(lower) || !isFinite(upper)) continue;
+    const kindText = String(row.zone_type ?? row.kind ?? row.side
+      ?? row.type ?? "").toLowerCase();
+    const zone_type = /supply|resist|sell|short/.test(kindText)
+      ? "supply" : "demand";
+    zones.push({label: String(row.label ?? row.name
+      ?? `${zone_type} ${lower}–${upper}`), zone_type,
+      lower: Math.min(lower, upper), upper: Math.max(lower, upper)});
+  }
+  return zones.slice(0, 16);
+}
 function renderChart(spec) {
   if (typeof d3 === "undefined")
     return el("p", {class: "violation"}, "⚠ chart library not loaded — the chart cannot render");
@@ -1988,7 +2010,7 @@ function renderChart(spec) {
       .call(d3.axisBottom(x).tickValues(ticks).tickSize(0)).call(styleAxis);
     // Supply/demand zone overlays (ported from the old desk): translucent
     // bands behind the candles, labeled at the left edge.
-    for (const zone of (spec.zones || []).slice(0, 16)) {
+    for (const zone of normalizeZones(spec.zones)) {
       const upper = +zone.upper, lower = +zone.lower;
       if (!isFinite(upper) || !isFinite(lower) || upper < lower) continue;
       const color = zone.zone_type === "supply" ? down : up;

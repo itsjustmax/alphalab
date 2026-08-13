@@ -256,11 +256,53 @@ def append_audit_ledger(environment, now, clean, broken_keys,
         pass
 
 
+def live_trade_for_contract(context, contracts, ignore_key=None):
+    """The existing non-closed trade already holding one of `contracts`.
+
+    One contract is one live trade on this desk: new information amends
+    the trade that exists, it does not open a rival idea.
+    """
+
+    for key, trade in sorted((context or {}).items()):
+        if not key.startswith("trades/") or key == ignore_key:
+            continue
+        if not isinstance(trade, dict) or trade.get("state") == "closed":
+            continue
+        held = [str(c) for c in (trade.get("contracts") or [])]
+        for wanted in contracts or []:
+            for existing in held:
+                if gates.contracts_match(str(wanted), existing):
+                    return key, existing
+    return None, None
+
+
+def duplicate_contract_violations(cases):
+    """Cross-trade rule: no contract lives in two non-closed trades."""
+
+    violations = {}
+    keys = sorted(k for k, v in (cases or {}).items()
+                  if isinstance(v, dict) and v.get("state") != "closed")
+    for index, key in enumerate(keys):
+        for other in keys[index + 1:]:
+            for contract_a in (cases[key].get("contracts") or []):
+                for contract_b in (cases[other].get("contracts") or []):
+                    if gates.contracts_match(str(contract_a), str(contract_b)):
+                        message = (f"{contract_a}: one contract, one live "
+                                   f"trade — this contract is also in "
+                                   f"{other}; amend that trade instead")
+                        violations.setdefault(key, []).append(message)
+                        violations.setdefault(other, []).append(
+                            f"{contract_b}: also held by {key} — merge the "
+                            f"newer idea into this trade")
+    return violations
+
+
 def audit_violations(cases, check):
     """The post-turn audit: run the case gate over every case.
 
     Pure — `check(key, case)` returns that case's violations; the result
-    maps only the broken cases to what is broken, by name.
+    maps only the broken cases to what is broken, by name. The
+    cross-trade rule (one contract, one live trade) is layered on top.
     """
 
     violations = {}
@@ -268,6 +310,8 @@ def audit_violations(cases, check):
         found = check(key, cases[key])
         if found:
             violations[key] = found
+    for key, found in duplicate_contract_violations(cases).items():
+        violations.setdefault(key, []).extend(found)
     return violations
 
 
@@ -493,6 +537,29 @@ class Pilot:
                 trade, violations = forms.trade_from_form(form)
                 target = "trades/" + key[len("forms/trade/"):]
                 cell = trade
+                if not violations:
+                    existing_key, held = live_trade_for_contract(
+                        context, trade.get("contracts"), ignore_key=target)
+                    if existing_key:
+                        # One contract, one live trade: fold the new
+                        # thinking into the trade that already holds it.
+                        existing = dict(context[existing_key])
+                        for field in ("thesis", "invalidation"):
+                            if trade.get(field):
+                                existing[field] = trade[field]
+                        merged_evidence = list(existing.get("evidence") or [])
+                        for item in trade.get("evidence") or []:
+                            if item not in merged_evidence:
+                                merged_evidence.append(item)
+                        existing["evidence"] = merged_evidence
+                        target, cell = existing_key, existing
+                        self._api(
+                            "POST",
+                            f"/environments/{self.environment}/say",
+                            {"text": f"One contract, one live trade: "
+                             f"{held} already lives in {existing_key} — "
+                             f"amended it with the new thesis instead of "
+                             f"opening a rival idea."})
             else:
                 target, cell, violations = forms.expand(form, templates)
             if violations:
@@ -661,6 +728,62 @@ class Pilot:
         print(f"[{utc_now():%H:%M:%S}] plan {trade_id}: {kind} "
               f"@ ${price:g}", flush=True)
 
+    def stream_health(self, context, now):
+        """Watchlist truth, written where everyone can see it.
+
+        Each pass reads the freshest persisted tick per watchlist symbol
+        (fast batch — no warming) and writes desk/streams: last, clock,
+        age, and which symbols are STALE or silent. The member's chips
+        show it; the agent's next turn reads it and can act (re-warm,
+        check the lane) instead of assuming the chips are fine.
+        """
+
+        watchlist = (context or {}).get("watchlist")
+        if isinstance(watchlist, str):
+            watchlist = watchlist.replace(",", " ").split()
+        symbols = [str(s).strip().upper() for s in (watchlist or []) if s]
+        if not symbols:
+            return None
+        try:
+            reply = self._api(
+                "POST",
+                f"/environments/{self.environment}/tools/live_quotes",
+                {"args": {"symbols": symbols}})
+            quotes = (((reply.get("result") or {}).get("data") or {})
+                      .get("quotes")) or {}
+        except Exception as error:
+            quotes = {}
+            print(f"[{utc_now():%H:%M:%S}] stream health check failed: "
+                  f"{str(error)[:120]}", flush=True)
+        health, stale = {}, []
+        for symbol in symbols:
+            quote = quotes.get(symbol)
+            if not isinstance(quote, dict) or quote.get("last") is None:
+                health[symbol] = None
+                stale.append(symbol)
+                continue
+            clock = gates.parse_clock(quote.get("observed_at"))
+            age = None if clock is None \
+                else max(0, int((now - clock).total_seconds()))
+            health[symbol] = {"last": quote.get("last"),
+                              "observed_at": quote.get("observed_at"),
+                              "age_seconds": age}
+            if age is None or age > 180:
+                stale.append(symbol)
+        report = {"quotes": health, "stale": sorted(stale),
+                  "checked_at": now.isoformat(timespec="seconds")}
+        previous = (context or {}).get("desk/streams") or {}
+        last_write = gates.parse_clock(previous.get("checked_at"))
+        if sorted(previous.get("stale") or []) != report["stale"] \
+                or last_write is None \
+                or (now - last_write).total_seconds() >= 300:
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": "desk/streams", "value": report})
+            if report["stale"]:
+                print(f"[{utc_now():%H:%M:%S}] streams stale: "
+                      f"{', '.join(report['stale'])}", flush=True)
+        return report
+
     def record_orders(self, context, now):
         """Record every order whose market gate holds; announce each one."""
 
@@ -717,6 +840,7 @@ class Pilot:
                   f"broken — {', '.join(sorted(audited))}", flush=True)
         self.record_orders(context, now)
         self.manage_plans(context, now)
+        self.stream_health(context, now)
         self.last_holders = stream_holders(context)
         action, reason = decide(context, self.state, now, self.budget)
         if action == "build":

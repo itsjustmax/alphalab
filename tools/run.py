@@ -38,6 +38,7 @@ ALIASES = {
     "short_volume": "market.short_volume",
     "implied_move": "market.implied_move",
     "symbol_research": "market.symbol.research",
+    "symbol_zones": "market.symbol.zones",
     "system_health": "system.health",
 }
 

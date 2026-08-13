@@ -57,6 +57,13 @@ exists — hand-assembled cells are for shapes no template covers yet.
 
 ## Trades and the market gate
 
+**One contract, one live trade.** If new information arrives about a
+contract that already lives in a non-closed trade, amend THAT trade —
+update its thesis, invalidation, and evidence — never open a rival
+idea on the same contract. The forms lane enforces this (a trade form
+for a held contract folds into the existing trade), and the audit
+names any duplicates that slip through.
+
 A trade is `{"contracts": [one through five exact contracts],
 "thesis", "evidence": [context keys], "invalidation", "state": "idea" |
 "watching" | "open-simulated" | "closed", "fill": null, "exit": null,
@@ -161,6 +168,13 @@ draft. Note that a `live_quote` input answers `{"quote": {"bid", "ask",
 error lands on the plan as `last_error`; fixing your program (status
 back to draft for re-inspection if the logic changes materially) is
 desk work.
+
+`desk/streams` is the autopilot's watchlist health report: last tick,
+clock, and age per symbol, with the stale ones named. When it names a
+stale or silent symbol, act — re-warm with `live_quotes` `{warm: true}`
+via a card program, or check `capabilities` for the broken lane — and
+say what you found. The member's chips show the same staleness; never
+let a quiet stream pass as a live one.
 
 ## Honesty
 

@@ -485,3 +485,83 @@ def test_curation_verdicts_join_runs_to_audits():
     assert curate.verdict_for(stale, ledger, window_minutes=60) == "unjudged"
     unattributed = {"at": "2026-08-13T10:00:00+00:00"}
     assert curate.verdict_for(unattributed, ledger) == "unjudged"
+
+
+def test_one_contract_one_live_trade_in_the_forms_lane(tmp_path):
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    writes, said = {}, []
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/say"):
+            said.append(body["text"])
+            return {}
+        if path.endswith("/context") and body is not None:
+            writes[body["key"]] = body["value"]
+            return {}
+        return {}
+
+    pilot._api = fake_api
+    context = {
+        "trades/nvda-gamma": {
+            "contracts": ["NVDA 20260821 235C"], "thesis": "old thesis",
+            "invalidation": "old line", "state": "open-simulated",
+            "fill": {"contract": "NVDA 20260821 235C", "price": 0.96,
+                     "bid": 0.94, "ask": 0.96, "quantity": 1,
+                     "observed_at": "2026-08-12T15:00:00-04:00"}},
+        "forms/trade/nvda-rival": {
+            "contracts": ["NVDA 8/21 235C"], "thesis": "new thinking",
+            "invalidation": "new line"},
+    }
+    import datetime
+    now = datetime.datetime(2026, 8, 13, 12, 0,
+                            tzinfo=datetime.timezone.utc)
+    pilot.apply_forms(context, now)
+    assert "trades/nvda-rival" not in writes, "no rival idea"
+    amended = writes["trades/nvda-gamma"]
+    assert amended["thesis"] == "new thinking"
+    assert amended["invalidation"] == "new line"
+    assert amended["fill"]["price"] == 0.96  # the fill survives amends
+    assert amended["state"] == "open-simulated"
+    assert writes["forms/trade/nvda-rival"] is None  # form retired
+    assert any("one live trade" in text.lower() for text in said)
+
+
+def test_duplicate_contracts_are_audited():
+    cases = {
+        "trades/a": {"contracts": ["NVDA 20260821 235C"], "state": "idea"},
+        "trades/b": {"contracts": ["NVDA 8/21 235C"], "state": "watching"},
+        "trades/c": {"contracts": ["NVDA 20260821 235C"],
+                     "state": "closed"},  # closed trades are history
+    }
+    found = autopilot.duplicate_contract_violations(cases)
+    assert set(found) == {"trades/a", "trades/b"}
+    assert "trades/c" not in found
+
+
+def test_stream_health_names_the_stale(tmp_path):
+    import datetime
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    writes = {}
+    now = datetime.datetime(2026, 8, 13, 14, 0,
+                            tzinfo=datetime.timezone.utc)
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/tools/live_quotes"):
+            return {"result": {"ok": True, "data": {"quotes": {
+                "NVDA": {"last": 224.3,
+                         "observed_at": "2026-08-13T13:59:50+00:00"},
+                "SPX": {"last": 7748.5,
+                        "observed_at": "2026-08-13T12:00:00+00:00"},
+                "AMD": None}}}}
+        if path.endswith("/context") and body is not None:
+            writes[body["key"]] = body["value"]
+            return {}
+        return {}
+
+    pilot._api = fake_api
+    report = pilot.stream_health({"watchlist": ["NVDA", "SPX", "AMD"]}, now)
+    assert report["stale"] == ["AMD", "SPX"]  # silent + 2h-old tick
+    assert writes["desk/streams"]["quotes"]["NVDA"]["age_seconds"] == 10
+    assert writes["desk/streams"]["quotes"]["AMD"] is None
