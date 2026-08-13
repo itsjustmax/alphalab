@@ -1078,13 +1078,12 @@ function renderPositions(view) {
   const table = el("table");
   const head = el("tr");
   for (const column of ["contract", "state", "entry", "pnl from entry",
-                        "since entry", "exit / result", "underlying (EOD)",
-                        "management"])
+                        "underlying (EOD)", "management"])
     head.append(el("td", {class: "key"}, column));
   table.append(head);
   for (const [key, c] of rows) {
     const line = el("tr");
-    const name = el("td", {},
+    const name = el("td", {class: "contract-cell"},
       (c.contracts || []).map(contractLabel).join(" + ")
         || (c.fill || {}).contract || key.slice(7));
     name.append(focusChip(key, c));
@@ -1093,10 +1092,15 @@ function renderPositions(view) {
     stateCell.append(el("span", {class: `state s-${c.state}`}, c.state));
     line.append(stateCell);
     const f = c.fill;
-    line.append(el("td", {class: "val"}, f
-      ? `${f.quantity} @ $${f.price} (${f.bid}×${f.ask}) · ` +
-        String(f.observed_at).slice(0, 10)
-      : "—"));
+    const entryCell = el("td", {class: "val"});
+    if (f) {
+      entryCell.append(el("div", {}, `${f.quantity} @ $${f.price}`));
+      entryCell.append(el("div", {class: "muted"},
+        String(f.observed_at).slice(0, 10)));
+      entryCell.title = `filled against the live market ` +
+        `${f.bid}×${f.ask} · ${f.observed_at}`;
+    } else entryCell.textContent = "—";
+    line.append(entryCell);
     const joined = el("td", {class: "pnl-joined"});
     const pnl = el("div", {class: "val"}, "—");
     joined.append(pnl);
