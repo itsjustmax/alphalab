@@ -1641,10 +1641,13 @@ function renderWidgets(view) {
               ? {...spec, series: [{name: receipt.data.symbol,
                                     points: receipt.data.points}]}
               : {...spec, kind: "candle", candles: receipt.data.candles};
-            holder.replaceChildren(renderChart(filled),
+            const notes = [renderChart(filled),
               el("div", {class: "as-of"},
                 `as of ${receipt.as_of}${(receipt.gaps || []).length
-                  ? " · " + receipt.gaps[0] : ""}`));
+                  ? " · " + receipt.gaps[0] : ""}`)];
+            const gap = zoneGapNote(spec);
+            if (gap) notes.push(gap);
+            holder.replaceChildren(...notes);
           });
       } else {
         card.append(renderChart(spec));
@@ -1941,6 +1944,13 @@ function normalizeZones(raw) {
   }
   return zones.slice(0, 16);
 }
+function zoneGapNote(spec) {
+  const receipt = spec.zones_data;
+  if (!receipt || receipt.ready !== false) return null;
+  return el("div", {class: "as-of stale"},
+    "zones unavailable — the bar-collection lane did not answer; " +
+    "the chart stands, the zones return with the lane");
+}
 function renderChart(spec) {
   if (typeof d3 === "undefined")
     return el("p", {class: "violation"}, "⚠ chart library not loaded — the chart cannot render");
@@ -2010,7 +2020,11 @@ function renderChart(spec) {
       .call(d3.axisBottom(x).tickValues(ticks).tickSize(0)).call(styleAxis);
     // Supply/demand zone overlays (ported from the old desk): translucent
     // bands behind the candles, labeled at the left edge.
-    for (const zone of normalizeZones(spec.zones)) {
+    // Zones may arrive as spec.zones (hand-authored) or inside the
+    // symbol_zones receipt at spec.zones_data — and an empty answer
+    // with ready:false is a named gap, not a blank.
+    for (const zone of normalizeZones(spec.zones
+        ?? spec.zones_data?.rows)) {
       const upper = +zone.upper, lower = +zone.lower;
       if (!isFinite(upper) || !isFinite(lower) || upper < lower) continue;
       const color = zone.zone_type === "supply" ? down : up;
