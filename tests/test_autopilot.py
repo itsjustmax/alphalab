@@ -437,3 +437,51 @@ def test_fleet_keeps_one_state_file_per_desk(monkeypatch, tmp_path):
     assert a is not b
     assert a.state_path != b.state_path
     assert fleet._pilot("desk-1") is a
+
+
+def test_audit_ledger_appends_verdict_lines(tmp_path):
+    import datetime
+    ledger = str(tmp_path / "ledger.jsonl")
+    now = datetime.datetime(2026, 8, 13, 1, 0,
+                            tzinfo=datetime.timezone.utc)
+    autopilot.append_audit_ledger("env-1", now, True, [], path=ledger)
+    autopilot.append_audit_ledger("env-1", now, False, ["trades/x"],
+                                  path=ledger)
+    import json as json_module
+    lines = [json_module.loads(line) for line in
+             open(ledger, encoding="utf-8")]
+    assert [line["clean"] for line in lines] == [True, False]
+    assert lines[1]["broken"] == ["trades/x"]
+
+
+def test_curation_verdicts_join_runs_to_audits():
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location(
+        "curate_corpus", os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..", "tools", "curate_corpus.py"))
+    curate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(curate)
+
+    def entry(env, iso, clean):
+        import gates
+        return (env, gates.parse_clock(iso), clean)
+
+    ledger = [
+        entry("desk-a", "2026-08-13T10:05:00+00:00", True),
+        entry("desk-a", "2026-08-13T11:00:00+00:00", False),
+        entry("desk-b", "2026-08-13T10:06:00+00:00", False),
+    ]
+    run = {"at": "2026-08-13T10:00:00+00:00", "environment": "desk-a"}
+    assert curate.verdict_for(run, ledger) == "accepted"
+    later = {"at": "2026-08-13T10:30:00+00:00", "environment": "desk-a"}
+    assert curate.verdict_for(later, ledger) == "rejected"
+    other_desk = {"at": "2026-08-13T10:00:00+00:00",
+                  "environment": "desk-b"}
+    assert curate.verdict_for(other_desk, ledger) == "rejected"
+    # an audit far past the window claims nothing
+    stale = {"at": "2026-08-13T05:00:00+00:00", "environment": "desk-a"}
+    assert curate.verdict_for(stale, ledger, window_minutes=60) == "unjudged"
+    unattributed = {"at": "2026-08-13T10:00:00+00:00"}
+    assert curate.verdict_for(unattributed, ledger) == "unjudged"

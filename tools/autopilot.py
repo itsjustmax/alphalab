@@ -235,6 +235,27 @@ def order_recording(card_key, context, check, now):
     }
 
 
+AUDIT_LEDGER = os.path.expanduser("~/.alphalab-autopilot/audit-ledger.jsonl")
+
+
+def append_audit_ledger(environment, now, clean, broken_keys,
+                        path=None):
+    """One line per audit verdict, forever — the shared board keeps only
+    the LATEST desk/audit, but corpus curation needs the history: which
+    build turns were followed by a clean desk, and which broke it."""
+
+    line = {"environment": environment,
+            "at": now.isoformat(timespec="seconds"),
+            "clean": bool(clean), "broken": list(broken_keys)}
+    try:
+        target = path or AUDIT_LEDGER
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(line) + "\n")
+    except OSError:
+        pass
+
+
 def audit_violations(cases, check):
     """The post-turn audit: run the case gate over every case.
 
@@ -350,6 +371,8 @@ class Pilot:
         violations = audit_violations(trades, self._check_trade)
         self.state["audit_fingerprint"] = fingerprint
         self._save()
+        append_audit_ledger(self.environment, now, not violations,
+                            sorted(violations))
         self._api("POST", f"/environments/{self.environment}/context", {
             "key": "desk/audit",
             "value": {
