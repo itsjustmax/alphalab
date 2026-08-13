@@ -1172,9 +1172,16 @@ function premiumSparkCell(tradeKey, trade, label) {
   const entryClock = Date.parse(fill.observed_at);
   const days = Math.max(1, Math.min(30, Math.ceil(
     (Date.now() - (isNaN(entryClock) ? Date.now() : entryClock)) / 86_400_000)));
-  const barSize = days <= 3 ? "30 mins" : "1 hour";
+  // Finest resolution whose full since-entry history fits the lane's
+  // 200-bar window: 5-minute bars (~78/session) up to ~2 days, then
+  // step down. use_rth on the lane means closed hours never appear,
+  // and the index-based x-axis compresses the session gaps away.
+  const perDay = [["5 mins", 78], ["15 mins", 26],
+                  ["30 mins", 13], ["1 hour", 7]];
+  const [barSize] = perDay.find(([, n]) => days * n <= 200)
+    || ["1 hour", 7];
   toolData("contract_bars", {...args, duration: `${days + 1} D`,
-    bar_size: barSize}, 15).then(receipt => {
+    bar_size: barSize, return_limit: 200}, 15).then(receipt => {
     const bars = (receipt?.ok && (receipt.data?.rows || receipt.data?.bars)) || [];
     let since = bars.filter(bar =>
       isNaN(entryClock) || Date.parse(bar.bar_time) >= entryClock - 3_600_000);

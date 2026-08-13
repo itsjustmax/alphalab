@@ -117,7 +117,8 @@
         "strike": "strike (options)",
         "right": "C or P (options)",
         "duration": "IBKR window, e.g. 5 D",
-        "bar_size": "e.g. 1 hour, 1 day"
+        "bar_size": "e.g. 5 mins, 1 hour, 1 day",
+        "return_limit": "recent bars returned (default 10, max 200)"
       },
       "command": [
         "python3",

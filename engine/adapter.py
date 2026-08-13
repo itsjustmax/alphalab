@@ -33,7 +33,8 @@ ALLOWED_OPERATIONS = {
     "system.health",
 }
 
-MAX_ROWS = 60
+MAX_ROWS = 240   # fine-grained series (5-min bars) need room; the
+                 # byte cap below is the real honesty bound
 MAX_RECEIPT_BYTES = 240_000  # entries cap at 256KB; leave headroom
 
 
