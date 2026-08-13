@@ -784,15 +784,30 @@ class Pilot:
                 attempts[symbol] = now.isoformat(timespec="seconds")
         if warm:
             self._save()
-            try:
-                self._api(
-                    "POST",
-                    f"/environments/{self.environment}/tools/live_quotes",
-                    {"args": {"symbols": warm, "warm": True}})
-                print(f"[{utc_now():%H:%M:%S}] re-warming stale "
-                      f"stream(s): {', '.join(warm)}", flush=True)
-            except Exception:
-                pass
+            # Stop-then-start, not a plain warm: the engine's start
+            # trusts a registration row that can outlive its dead
+            # worker ("already active", zero live workers) — clearing
+            # the phantom first is what actually revives the stream.
+            for symbol in warm:
+                request = {"symbol": symbol}
+                if symbol in gates.INDEX_SYMBOLS:
+                    request["sec_type"] = "IND"
+                try:
+                    self._api(
+                        "POST",
+                        f"/environments/{self.environment}"
+                        f"/tools/market_stream",
+                        {"args": {**request, "action": "stop"}})
+                    self._api(
+                        "POST",
+                        f"/environments/{self.environment}"
+                        f"/tools/market_stream",
+                        {"args": {**request, "action": "start",
+                                  "owner": "alphalab-desk"}})
+                except Exception:
+                    continue
+            print(f"[{utc_now():%H:%M:%S}] restarted stale stream(s): "
+                  f"{', '.join(warm)}", flush=True)
         previous = (context or {}).get("desk/streams") or {}
         last_write = gates.parse_clock(previous.get("checked_at"))
         if sorted(previous.get("stale") or []) != report["stale"] \

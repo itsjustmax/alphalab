@@ -576,10 +576,10 @@ def test_stale_streams_are_rewarmed_throttled(tmp_path):
                             tzinfo=datetime.timezone.utc)
 
     def fake_api(method, path, body=None):
+        if path.endswith("/tools/market_stream"):
+            warms.append((body["args"]["action"], body["args"]["symbol"]))
+            return {"result": {"ok": True, "data": {}}}
         if path.endswith("/tools/live_quotes"):
-            if (body.get("args") or {}).get("warm"):
-                warms.append(body["args"]["symbols"])
-                return {"result": {"ok": True, "data": {"quotes": {}}}}
             return {"result": {"ok": True, "data": {"quotes": {
                 "NVDA": {"last": 224.3,
                          "observed_at": "2026-08-13T02:00:00+00:00"}}}}}
@@ -587,9 +587,10 @@ def test_stale_streams_are_rewarmed_throttled(tmp_path):
 
     pilot._api = fake_api
     pilot.stream_health({"watchlist": ["NVDA"]}, now)
-    assert warms == [["NVDA"]], "a stale stream earns one warm attempt"
+    # stop-then-start: a phantom registration must be cleared first
+    assert warms == [("stop", "NVDA"), ("start", "NVDA")]
     pilot.stream_health({"watchlist": ["NVDA"]}, now)
-    assert warms == [["NVDA"]], "throttled: no second attempt inside 5m"
+    assert len(warms) == 2, "throttled: no second attempt inside 5m"
     later = now + datetime.timedelta(minutes=6)
     pilot.stream_health({"watchlist": ["NVDA"]}, later)
-    assert len(warms) == 2, "a new attempt after the throttle window"
+    assert len(warms) == 4, "a new attempt after the throttle window"
