@@ -185,6 +185,17 @@ who reads your work in an inspection modal before anything runs:
   firing case, the holding case, and any ratchet with
   `expect_state_contains`. A plan whose tests fail cannot be activated.
 
+**The management lifecycle is law.** Every trade follows one path:
+staged (forms lane) → position opens (gate) → the member CREATES the
+plan (the positions table's create button; their words land at
+plans/<id> status requested) → compiling it is your very next turn
+(the autopilot forces one if you have not) → DRAFT → the member
+inspects and ACTIVATES (never you) → the bot runs, the bracket works,
+the tape shows it. The audit enforces every link: an open position
+without a plan, a plan with a runtime error, and a request left
+uncompiled past 15 minutes are all named violations — fixing them
+outranks everything else on your turn.
+
 **The bot contract.** You do not manage positions live — you write a
 BOT that does: the plan's `manage()` is that bot, and while its
 position is OPEN it must answer a `market`: {"stop": price, "target":

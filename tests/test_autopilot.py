@@ -691,3 +691,31 @@ def test_cockpit_candidate_contracts_hold_streams():
     holders = autopilot.stream_holders(context)
     assert any(h.get("strike") == 240 for h in holders), \
         "a watched candidate holds its stream"
+
+
+def test_a_requested_plan_forces_a_prompt_turn():
+    context = {**ACTIVE_DESK,
+               "plans/spy": {"plan": "trail it", "status": "requested"}}
+    ready = state(last_turn="2026-08-12T17:00:00+00:00")
+    action, reason = autopilot.decide(context, ready, RTH)
+    assert action == "build" and "awaiting compilation" in reason
+
+
+def test_plan_health_is_audited():
+    import datetime
+    now = datetime.datetime(2026, 8, 13, 16, 0,
+                            tzinfo=datetime.timezone.utc)
+    context = {
+        "trades/naked": {"state": "open-simulated",
+                         "contracts": ["SPY 20260814 785C"]},
+        "trades/managed": {"state": "open-simulated",
+                           "contracts": ["NVDA 20260821 235C"]},
+        "plans/managed": {"status": "active", "active_at": "x",
+                          "program": {}, "last_error": "manage() raised"},
+        "plans/slow": {"status": "requested",
+                       "requested_at": "2026-08-13T15:30:00+00:00"},
+    }
+    found = autopilot.plan_health_violations(context, now)
+    assert "NO management plan" in found["trades/naked"][0]
+    assert "plan error" in found["plans/managed"][0]
+    assert "still not compiled" in found["plans/slow"][0]

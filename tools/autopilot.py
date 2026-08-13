@@ -333,6 +333,39 @@ def evidence_violations(cases, context):
     return violations
 
 
+def plan_health_violations(context, now):
+    """Management reliability, enforced: every open position has a
+    plan; active plans run clean; requests get compiled promptly."""
+
+    violations = {}
+    for key, trade in sorted((context or {}).items()):
+        if not key.startswith("trades/") or not isinstance(trade, dict):
+            continue
+        if trade.get("state") != "open-simulated":
+            continue
+        plan_key = f"plans/{key[7:]}"
+        plan = (context or {}).get(plan_key)
+        if not isinstance(plan, dict):
+            violations.setdefault(key, []).append(
+                "open position with NO management plan — the member "
+                "creates one from the positions table")
+    for key, plan in sorted((context or {}).items()):
+        if not key.startswith("plans/") or not isinstance(plan, dict):
+            continue
+        if plan.get("last_error"):
+            violations.setdefault(key, []).append(
+                f"plan error: {plan['last_error']} — fixing the program "
+                f"is the next turn's first job")
+        if plan.get("status") == "requested" and not plan.get("program"):
+            asked = gates.parse_clock(plan.get("requested_at"))
+            if asked is not None \
+                    and (now - asked).total_seconds() > 15 * 60:
+                violations.setdefault(key, []).append(
+                    "requested over 15 minutes ago and still not "
+                    "compiled — the member is waiting")
+    return violations
+
+
 def audit_violations(cases, check):
     """The post-turn audit: run the case gate over every case.
 
@@ -349,6 +382,15 @@ def audit_violations(cases, check):
     for key, found in duplicate_contract_violations(cases).items():
         violations.setdefault(key, []).extend(found)
     return violations
+
+
+def pending_plan_requests(context):
+    """plans/ entries awaiting compilation — the desk owes these work."""
+
+    return sorted(
+        key for key, plan in (context or {}).items()
+        if key.startswith("plans/") and isinstance(plan, dict)
+        and plan.get("status") == "requested" and not plan.get("program"))
 
 
 def decide(context, state, now, budget=DEFAULT_BUDGET):
@@ -377,6 +419,10 @@ def decide(context, state, now, budget=DEFAULT_BUDGET):
     )
     if new_answers:
         return "build", f"answer landed: {', '.join(new_answers)}"
+    requested = pending_plan_requests(context)
+    if requested:
+        return "build", (f"plan awaiting compilation: "
+                         f"{', '.join(requested)} — the member is waiting")
     unnarrated = sorted(set(state.get("unnarrated_fills") or []))
     if unnarrated:
         return "build", f"paper fill recorded: {', '.join(unnarrated)}"
@@ -449,12 +495,18 @@ class Pilot:
                   if k.startswith("trades/") and v is not None}
         evidence_keys = sorted(k for k, v in context.items()
                                if v is not None)
-        fingerprint = json.dumps([trades, evidence_keys],
+        plan_marks = {k: [bool(v.get("program")), v.get("status"),
+                          str(v.get("last_error") or "")]
+                      for k, v in context.items()
+                      if k.startswith("plans/") and isinstance(v, dict)}
+        fingerprint = json.dumps([trades, evidence_keys, plan_marks],
                                  sort_keys=True, default=str)
         if fingerprint == self.state.get("audit_fingerprint"):
             return None
         violations = audit_violations(trades, self._check_trade)
         for key, found in evidence_violations(trades, context).items():
+            violations.setdefault(key, []).extend(found)
+        for key, found in plan_health_violations(context, now).items():
             violations.setdefault(key, []).extend(found)
         self.state["audit_fingerprint"] = fingerprint
         self._save()

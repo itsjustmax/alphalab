@@ -1942,8 +1942,16 @@ function cockpitStrip(meta) {
   const plan = meta.plan;
   if (plan) {
     const beat = el("div", {class: "cockpit-item"});
-    beat.append(el("span", {class: `state s-plan-${plan.status}`},
-      plan.status));
+    const statusChip = el("button", {type: "button",
+      class: `state s-plan-${plan.status} plan-chip`,
+      title: plan.program
+        ? "inspect this plan — activate or pause from the modal"
+        : "the desk is compiling this plan"},
+      plan.status === "requested" ? "compiling…" : plan.status);
+    statusChip.addEventListener("click", () => {
+      if (plan.program) openPlanModal(meta.tradeKey.slice(7));
+    });
+    beat.append(statusChip);
     const stateText = Object.entries(plan.state || {})
       .map(([k, v]) => `${k}=${typeof v === "number" ? v : JSON.stringify(v)}`)
       .join(" · ");
