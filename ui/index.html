@@ -262,13 +262,19 @@
     font-size: .74rem; padding: .25rem .6rem; cursor: pointer; }
   .plugin-chip.plus { font-weight: 700; color: var(--accent);
     border-color: var(--accent); border-style: dashed; }
-  .drawer-holder { position: relative; }
-  .plugin-panel { position: absolute; right: 0; top: 1.9rem; z-index: 70;
-    min-width: 220px; background: var(--surface);
-    border: 1px solid var(--border-strong); border-radius: 10px;
-    box-shadow: 0 12px 32px rgba(0,0,0,.4); padding: .45rem;
+  .pane-body { display: flex; gap: .7rem; align-items: stretch; }
+  .pane-body .pane-chart { flex: 1; min-width: 0; }
+  .plugin-sidebar { width: 230px; flex: 0 0 230px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: .45rem; margin-top: .5rem;
     display: flex; flex-direction: column; gap: .15rem;
-    max-height: 320px; overflow-y: auto; }
+    max-height: 340px; overflow-y: auto; }
+  .plugin-design { margin-top: .4rem; border-top: 1px solid var(--border);
+    padding-top: .45rem; display: flex; flex-direction: column;
+    gap: .35rem; }
+  .plugin-design input { background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px;
+    padding: .35rem .5rem; font: inherit; font-size: .78rem; }
   .plugin-row { display: flex; align-items: center; gap: .5rem;
     font-size: .8rem; padding: .25rem .35rem; border-radius: 6px;
     cursor: pointer; }
@@ -1587,13 +1593,17 @@ function tickPane(meta) {
   head.append(el("h4", {}, `${meta.label} — tape`));
   head.append(el("span", {class: "muted", style: "font-size:.72rem"},
     "every tick, persisted; ~last 200"));
-  head.append(pluginDrawer("tape", meta, null));
+  head.append(sidebarToggle("tape"));
   head.append(paneFoldChip(
     `cockpit ${meta.tradeKey.slice(7)} · tape`,
     () => [tapeText(meta), planText(meta)].join("\n")));
   pane.append(head);
+  const body = el("div", {class: "pane-body"});
   const chart = el("div", {class: "pane-chart"});
-  pane.append(chart);
+  body.append(chart);
+  if (openSidebars.has("tape"))
+    body.append(pluginSidebar("tape", meta, null));
+  pane.append(body);
   if (tapeMemory[meta.label])
     drawTape(chart, tapeMemory[meta.label], meta.label, meta);
   else chart.textContent = "…";
@@ -1789,23 +1799,15 @@ async function toggleLibraryPlugin(meta, pane, plugin) {
   }
   renderChartModal();
 }
-// The plugin drawer: one tidy list per pane — built-ins, then the
-// library, then ＋ to design a new one. Timeframes stay as buttons;
-// everything analytic lives here, scalable to a long list.
-const openDrawers = new Set();
-function pluginDrawer(pane, meta, state) {
-  const holder = el("span", {class: "drawer-holder"});
-  const toggle = el("button", {type: "button", class: "plugin-chip",
-    title: "plugins for this chart"}, "plugins ▾");
-  const panel = el("div", {class: "plugin-panel"});
-  panel.hidden = !openDrawers.has(pane);
-  toggle.addEventListener("click", () => {
-    panel.hidden = !panel.hidden;
-    panel.hidden ? openDrawers.delete(pane) : openDrawers.add(pane);
-  });
+// The plugin sidebar: expands from the RIGHT of the chart and
+// compresses it left — never overlays. One tidy list per pane:
+// built-ins, the library, then an inline box to design a new plugin
+// with the agent. The "plugins" toggle opens AND closes it.
+const openSidebars = new Set();
+function pluginSidebar(pane, meta, state) {
+  const sidebar = el("div", {class: "plugin-sidebar"});
   const row = (label, on, describe, onToggle) => {
-    const line = el("label", {class: "plugin-row",
-      title: describe || ""});
+    const line = el("label", {class: "plugin-row", title: describe || ""});
     const box = el("input", {type: "checkbox"});
     box.checked = on;
     box.addEventListener("change", onToggle);
@@ -1815,7 +1817,7 @@ function pluginDrawer(pane, meta, state) {
   if (state) {
     for (const plugin of Object.values(CHART_PLUGINS)) {
       if (plugin.appliesTo !== "both" && plugin.appliesTo !== pane) continue;
-      panel.append(row(plugin.label, state.plugins.has(plugin.id), "",
+      sidebar.append(row(plugin.label, state.plugins.has(plugin.id), "",
         () => {
           state.plugins.has(plugin.id)
             ? state.plugins.delete(plugin.id)
@@ -1827,22 +1829,48 @@ function pluginDrawer(pane, meta, state) {
   for (const plugin of libraryPlugins(pane)) {
     const on = !!lastView?.context?.[
       libraryInstanceKey(meta, plugin.slug, pane)];
-    panel.append(row(plugin.label || plugin.slug, on,
+    sidebar.append(row(plugin.label || plugin.slug, on,
       plugin.describe, () => toggleLibraryPlugin(meta, pane, plugin)));
   }
-  const plus = el("button", {type: "button", class: "plugin-chip plus"},
-    "＋ design a new plugin");
-  plus.addEventListener("click", () => {
-    const input = document.querySelector("#overlay-composer input");
-    if (input) {
-      input.value = `new ${pane} plugin: `;
-      input.focus();
-      input.scrollIntoView({behavior: "smooth", block: "center"});
+  // design a new plugin — right here in the sidebar
+  const design = el("div", {class: "plugin-design"});
+  design.append(el("div", {class: "muted", style: "font-size:.72rem"},
+    "design a new plugin"));
+  const input = el("input", {type: "text",
+    placeholder: "describe it — “VWAP”, “yesterday’s value area”…"});
+  const send = el("button", {type: "button", class: "desk-rename"},
+    "ask the desk");
+  const submit = () => {
+    const wish = input.value.trim();
+    if (!wish) return;
+    const main = document.querySelector("#overlay-composer input");
+    const form = document.querySelector("#overlay-composer form");
+    if (main && form) {
+      main.value = `new ${pane} plugin: ${wish}`;
+      form.requestSubmit();
+      input.value = "";
+      input.placeholder = "asked — the plugin lands in this list";
     }
+  };
+  send.addEventListener("click", submit);
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); submit(); }
   });
-  panel.append(plus);
-  holder.append(toggle, panel);
-  return holder;
+  design.append(input, send);
+  sidebar.append(design);
+  return sidebar;
+}
+function sidebarToggle(pane) {
+  const open = openSidebars.has(pane);
+  const toggle = el("button", {type: "button", class: "plugin-chip"
+    + (open ? " on" : ""), title: "open/close this chart's plugins"},
+    open ? "plugins ▸" : "plugins ▾");
+  toggle.addEventListener("click", () => {
+    openSidebars.has(pane) ? openSidebars.delete(pane)
+      : openSidebars.add(pane);
+    renderChartModal();
+  });
+  return toggle;
 }
 function chartPane(kind, meta, state) {
   const pane = el("div", {class: "pane"});
@@ -1859,14 +1887,18 @@ function chartPane(kind, meta, state) {
     });
     head.append(chip);
   }
-  head.append(pluginDrawer(kind, meta, state));
+  head.append(sidebarToggle(kind));
   head.append(paneFoldChip(
     `cockpit ${meta.tradeKey.slice(7)} · ${kind} chart`,
     () => [paneBarsText(meta, kind, state.tf), planText(meta),
            overlaysText(meta)].join("\n")));
   pane.append(head);
+  const body = el("div", {class: "pane-body"});
   const chart = el("div", {class: "pane-chart"});
-  pane.append(chart);
+  body.append(chart);
+  if (openSidebars.has(kind))
+    body.append(pluginSidebar(kind, meta, state));
+  pane.append(body);
   const [barSize, duration] = tfs[state.tf];
   const memoryKey = `${meta.tradeKey}|${kind}|${state.tf}`;
   const plugins = () => [...state.plugins].map(id => CHART_PLUGINS[id])
