@@ -382,3 +382,58 @@ def test_forms_become_cells_and_bad_forms_learn_their_errors(tmp_path):
     assert writes["forms/trade/spread"] is None          # form retired
     assert writes["widgets/chart-amd"]["chart"]["symbol"] == "AMD"
     assert "still needs: symbol" in writes["forms/broken"]["errors"][0]
+
+
+def test_extra_holders_protect_another_desks_streams(tmp_path):
+    # Two desks: this pilot's context holds nothing, but the fleet passes
+    # the OTHER desk's holders — its streams must survive the sweep.
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    stops = []
+    active = [
+        {"stream_id": "s-other-desk", "owner": "alphalab-desk",
+         "contract_key": "IBKR:OPT:NVDA:20260821:235:C:100:SMART:USD"},
+        {"stream_id": "s-orphan", "owner": "alphalab-desk",
+         "contract_key": "IBKR:STK:TSLA:SMART:USD"},
+    ]
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/tools/market_stream"):
+            if body["args"]["action"] == "list_active":
+                return {"ok": True, "result": {"ok": True,
+                                               "data": {"rows": active}}}
+            stops.append(body["args"]["stream_id"])
+            return {"ok": True, "result": {"ok": True, "data": {}}}
+        return {"ok": True}
+
+    pilot._api = fake_api
+    stopped = pilot.sweep_streams(None, extra_holders=[
+        {"symbol": "NVDA", "sec_type": "OPT", "expiration": "20260821",
+         "strike": 235, "right": "C"}])
+    assert stopped == 1
+    assert stops == ["s-orphan"]
+
+
+def test_fleet_discovers_only_this_harness(monkeypatch, tmp_path):
+    listed = [
+        {"environment_id": "desk-1", "harness": "AlphaLab"},
+        {"environment_id": "other", "harness": "Campfire"},
+        {"environment_id": "desk-2", "harness": "AlphaLab"},
+    ]
+    monkeypatch.setattr(autopilot.Pilot, "_api",
+                        lambda self, method, path, body=None: listed)
+    fleet = autopilot.Fleet("http://x", "t", 36, str(tmp_path))
+    assert fleet.discover() == ["desk-1", "desk-2"]
+    # A pinned fleet ignores discovery entirely.
+    pinned = autopilot.Fleet("http://x", "t", 36, str(tmp_path),
+                             environment="desk-9")
+    assert pinned.discover() == ["desk-9"]
+
+
+def test_fleet_keeps_one_state_file_per_desk(monkeypatch, tmp_path):
+    fleet = autopilot.Fleet("http://x", "t", 36, str(tmp_path))
+    a = fleet._pilot("desk-1")
+    b = fleet._pilot("desk-2")
+    assert a is not b
+    assert a.state_path != b.state_path
+    assert fleet._pilot("desk-1") is a

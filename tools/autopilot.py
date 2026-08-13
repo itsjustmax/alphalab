@@ -117,6 +117,43 @@ def parse_contract_label(label):
     return parsed
 
 
+def stream_holders(context):
+    """Every stream this desk's context holds, as contract args.
+
+    Armed orders, the watchlist (chips read live), active plans' declared
+    inputs, and every open position's own contract (the PnL mark) — a
+    plan mid-trail must never lose its eyes. Pure, pinned by tests.
+    """
+
+    armed = [((card.get("refresh") or {}).get("args") or {})
+             for key, card in (context or {}).items()
+             if is_order_card(key, card)]
+    watchlist = (context or {}).get("watchlist")
+    if isinstance(watchlist, str):
+        watchlist = watchlist.replace(",", " ").split()
+    for symbol in (watchlist or []):
+        armed.append({"symbol": str(symbol).strip().upper()})
+    for key, plan in (context or {}).items():
+        if not key.startswith("plans/") or not isinstance(plan, dict):
+            continue
+        if plan.get("status") != "active":
+            continue
+        for declaration in ((plan.get("program") or {}).get("inputs") or []):
+            if isinstance(declaration, dict) \
+                    and isinstance(declaration.get("args"), dict) \
+                    and declaration["args"].get("symbol"):
+                armed.append(declaration["args"])
+    for key, trade in (context or {}).items():
+        if not key.startswith("trades/") or not isinstance(trade, dict):
+            continue
+        if trade.get("state") != "open-simulated":
+            continue
+        fill_contract = (trade.get("fill") or {}).get("contract")
+        if fill_contract:
+            armed.append(parse_contract_label(str(fill_contract)))
+    return [args for args in armed if args]
+
+
 def is_order_card(key, card):
     return (key.startswith("widgets/fill-") and isinstance(card, dict)
             and card.get("kind") == "order")
@@ -367,46 +404,18 @@ class Pilot:
         except Exception:
             pass
 
-    def sweep_streams(self, context):
-        """Release desk-owned streams no working order holds.
+    def sweep_streams(self, context, extra_holders=None):
+        """Release desk-owned streams no desk holds.
 
         A fill releases its stream on recording; this catches the other
         exit — an order cancelled by writing null on its card — so no
         subscription (or its client-id lease) outlives its purpose.
-        Watchlist symbols hold their streams: the chips read them live.
+        With several desks open, the fleet passes every OTHER desk's
+        holders as extra_holders — one desk's sweep must never take
+        another desk's eyes.
         """
 
-        armed = [((card.get("refresh") or {}).get("args") or {})
-                 for key, card in (context or {}).items()
-                 if is_order_card(key, card)]
-        # The watchlist holds its streams too — chips read them live.
-        watchlist = (context or {}).get("watchlist")
-        if isinstance(watchlist, str):
-            watchlist = watchlist.replace(",", " ").split()
-        for symbol in (watchlist or []):
-            armed.append({"symbol": str(symbol).strip().upper()})
-        # Active plans hold the streams their declared inputs read, and
-        # every open position holds its own contract's stream (the PnL
-        # mark) — a plan mid-trail must never lose its eyes.
-        for key, plan in (context or {}).items():
-            if not key.startswith("plans/") or not isinstance(plan, dict):
-                continue
-            if plan.get("status") != "active":
-                continue
-            for declaration in ((plan.get("program") or {})
-                                .get("inputs") or []):
-                if isinstance(declaration, dict) \
-                        and isinstance(declaration.get("args"), dict) \
-                        and declaration["args"].get("symbol"):
-                    armed.append(declaration["args"])
-        for key, trade in (context or {}).items():
-            if not key.startswith("trades/") or not isinstance(trade, dict):
-                continue
-            if trade.get("state") != "open-simulated":
-                continue
-            fill_contract = (trade.get("fill") or {}).get("contract")
-            if fill_contract:
-                armed.append(parse_contract_label(str(fill_contract)))
+        armed = stream_holders(context) + list(extra_holders or [])
         try:
             reply = self._api(
                 "POST", f"/environments/{self.environment}/tools/market_stream",
@@ -685,7 +694,7 @@ class Pilot:
                   f"broken — {', '.join(sorted(audited))}", flush=True)
         self.record_orders(context, now)
         self.manage_plans(context, now)
-        self.sweep_streams(context)
+        self.last_holders = stream_holders(context)
         action, reason = decide(context, self.state, now, self.budget)
         if action == "build":
             self._api("POST", f"/environments/{self.environment}/build",
@@ -708,31 +717,114 @@ class Pilot:
         return action, reason
 
 
+class Fleet:
+    """One autopilot for every AlphaLab desk on this service.
+
+    The member can open as many desks as they like (mess one up, start a
+    fresh one — the platform home page opens them); the fleet discovers
+    every environment running this harness each pass, keeps one Pilot
+    (own state file, own budget) per desk, and runs the stream sweep
+    ONCE with the union of every desk's holders — one desk's sweep must
+    never take another desk's streams.
+    """
+
+    def __init__(self, url, token, budget, state_dir, model=None,
+                 harness_name="AlphaLab", environment=None):
+        self.url = url.rstrip("/")
+        self.token = token
+        self.budget = budget
+        self.state_dir = state_dir
+        self.model = model
+        self.harness_name = harness_name
+        self.environment = environment  # pinned single-desk mode
+        self.pilots = {}
+
+    def discover(self):
+        if self.environment:
+            return [self.environment]
+        probe = Pilot.__new__(Pilot)
+        probe.url, probe.token = self.url, self.token
+        try:
+            listed = probe._api("GET", "/environments")
+        except Exception:
+            return sorted(self.pilots)  # service blinked; keep known desks
+        return [item["environment_id"] for item in listed
+                if isinstance(item, dict)
+                and item.get("harness") == self.harness_name]
+
+    def _pilot(self, environment):
+        pilot = self.pilots.get(environment)
+        if pilot is None:
+            state_path = os.path.join(
+                self.state_dir, f"{environment}.json")
+            pilot = Pilot(self.url, self.token, environment, self.budget,
+                          state_path, model=self.model)
+            self.pilots[environment] = pilot
+            print(f"[{utc_now():%H:%M:%S}] desk {environment[:8]} "
+                  f"under autopilot", flush=True)
+        return pilot
+
+    def tick(self):
+        environments = self.discover()
+        results = []
+        for environment in environments:
+            pilot = self._pilot(environment)
+            try:
+                action, reason = pilot.tick()
+                results.append((environment, action, reason))
+            except Exception as error:
+                results.append((environment, "error", str(error)[:200]))
+        for stale in set(self.pilots) - set(environments):
+            print(f"[{utc_now():%H:%M:%S}] desk {stale[:8]} is gone; "
+                  f"autopilot released", flush=True)
+            self.pilots.pop(stale)
+        # One sweep for the whole fleet: every desk's holders protect
+        # every stream; only truly orphaned subscriptions are released.
+        live = [p for e, p in self.pilots.items() if e in environments]
+        if live:
+            union = [args for pilot in live
+                     for args in getattr(pilot, "last_holders", [])]
+            try:
+                live[0].sweep_streams(None, extra_holders=union)
+            except Exception:
+                pass
+        return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", required=True)
     parser.add_argument("--token", required=True)
-    parser.add_argument("--environment", required=True)
-    parser.add_argument("--budget", type=int, default=DEFAULT_BUDGET)
+    parser.add_argument("--environment", default=None,
+                        help="pin to one environment; omit to serve every "
+                             "desk running this harness")
+    parser.add_argument("--harness", default="AlphaLab",
+                        help="harness name to discover desks by")
+    parser.add_argument("--budget", type=int, default=DEFAULT_BUDGET,
+                        help="daily build budget PER DESK")
     parser.add_argument("--interval", type=int, default=30)
-    parser.add_argument("--state", default=None)
+    parser.add_argument("--state-dir",
+                        default=os.path.expanduser("~/.alphalab-autopilot"))
     parser.add_argument("--model", default="sonnet",
                         help="model id for scheduled turns (see GET /models)")
     arguments = parser.parse_args()
-    state_path = arguments.state or os.path.expanduser(
-        f"~/.alphalab-autopilot/{arguments.environment}.json")
-    pilot = Pilot(arguments.url, arguments.token, arguments.environment,
-                  arguments.budget, state_path, model=arguments.model)
-    last_reason = None
-    print(f"[{utc_now():%H:%M:%S}] autopilot on {arguments.environment} "
-          f"(budget {arguments.budget}/day, min gap {MIN_GAP_SECONDS // 60}m)",
-          flush=True)
+    os.makedirs(arguments.state_dir, exist_ok=True)
+    fleet = Fleet(arguments.url, arguments.token, arguments.budget,
+                  arguments.state_dir, model=arguments.model,
+                  harness_name=arguments.harness,
+                  environment=arguments.environment)
+    print(f"[{utc_now():%H:%M:%S}] autopilot fleet on "
+          f"{arguments.environment or f'every {arguments.harness} desk'} "
+          f"(budget {arguments.budget}/day per desk, "
+          f"min gap {MIN_GAP_SECONDS // 60}m)", flush=True)
+    last = {}
     while True:
         try:
-            action, reason = pilot.tick()
-            if action == "build" or reason != last_reason:
-                print(f"[{utc_now():%H:%M:%S}] {action}: {reason}", flush=True)
-            last_reason = reason
+            for environment, action, reason in fleet.tick():
+                if action == "build" or last.get(environment) != reason:
+                    print(f"[{utc_now():%H:%M:%S}] {environment[:8]} "
+                          f"{action}: {reason}", flush=True)
+                last[environment] = reason
         except Exception as error:
             print(f"[{utc_now():%H:%M:%S}] error: {error}", flush=True)
         time.sleep(arguments.interval)

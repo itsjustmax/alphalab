@@ -37,6 +37,10 @@
   header { display: flex; align-items: baseline; gap: .9rem; flex-wrap: wrap; }
   header .controls { margin-left: auto; display: flex; gap: .5rem;
                      align-items: center; }
+  #desks-link { color: var(--muted); font-size: .78rem;
+    text-decoration: none; border: 1px solid var(--border);
+    border-radius: 8px; padding: .3rem .6rem; }
+  #desks-link:hover { color: var(--text); border-color: var(--accent); }
   h1 { font-size: 1.7rem; margin: 0; letter-spacing: -.02em; font-weight: 750;
        background: linear-gradient(100deg, var(--text) 60%, var(--accent));
        -webkit-background-clip: text; background-clip: text;
@@ -239,6 +243,7 @@
 <header>
   <h1 id="title">…</h1>
   <span class="controls">
+    <a id="desks-link" title="all desks — open a fresh one if this one goes sideways">desks</a>
     <select id="font-pick" title="typeface"></select>
     <button id="theme-toggle" title="light / dark">◐</button>
   </span>
@@ -342,6 +347,9 @@ function applyTheme() {
   document.documentElement.dataset.theme =
     localStorage.getItem("alphalab-theme") || "dark";
 }
+// Every desk is one environment; the platform home lists them all and
+// opens fresh ones — mess a desk up, start clean, history kept.
+document.getElementById("desks-link").href = `/app?token=${token}`;
 document.getElementById("theme-toggle").addEventListener("click", () => {
   const current = localStorage.getItem("alphalab-theme") || "dark";
   localStorage.setItem("alphalab-theme",

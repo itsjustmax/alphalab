@@ -88,6 +88,15 @@ positions table marks every open position live from its own contract's
 stream: PnL from entry at the bid — the liquidation side — with the
 tick's clock in the tooltip.
 
+A member can run several desks at once — each environment is its own
+board with its own trades, plans, and autopilot state. The header's
+"desks" link opens the platform home, which lists every desk and opens
+fresh ones (mess one up, start clean; the old desk keeps its history).
+The autopilot runs as a fleet: it discovers every environment running
+this harness, keeps one pilot (own state, own daily budget) per desk,
+and sweeps streams once with the union of every desk's holders, so one
+desk's cleanup never takes another desk's live subscriptions.
+
 `desk/member_turn` is stamped by this client whenever the member fires a
 turn — the autopilot yields to it. `desk/next_check`, `desk/focus`, and `desk/autopilot` are the unassisted
 loop's keys: the agent schedules itself with the first two; the
