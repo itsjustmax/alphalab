@@ -132,6 +132,10 @@ def trade_from_form(fields):
         raw_contracts = [raw_contracts]
     contracts = [text for text in
                  (contract_text(item) for item in raw_contracts) if text]
+    if raw_contracts and not contracts:
+        # junk was OFFERED — keep it visible so the gate teaches the
+        # exact shape instead of silently passing an empty idea
+        contracts = list(raw_contracts)
     trade = {
         "contracts": contracts,
         "thesis": str(fields.get("thesis") or "").strip(),

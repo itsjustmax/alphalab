@@ -528,11 +528,25 @@ def test_the_adapter_redacts_local_paths():
 
 
 def test_a_trade_names_one_through_five_contracts():
-    for contracts in ([], ["a"] * 6, "NVDA", [""], None):
+    # junk shapes teach regardless of state
+    for contracts in (["a"] * 6, "NVDA", [""]):
         violations = gates.trade_violations(make_case(contracts=contracts))
         assert any(
             "one through five exact contracts" in v for v in violations
         ), contracts
+    # an ABSENT list is allowed only while the trade is an idea —
+    # the workshop's first job is finding the contracts
+    for contracts in ([], None):
+        idea = make_case(contracts=contracts)
+        idea["state"] = "idea"
+        if contracts is None:
+            idea.pop("contracts", None)
+        else:
+            idea["contracts"] = contracts
+        watching = dict(idea)
+        watching["state"] = "watching"
+        assert any("contracts" in v or "one through five" in v
+                   for v in gates.trade_violations(watching)), contracts
     spread = make_case(contracts=["NVDA 20260821 230C", "NVDA 20260821 240C"])
     assert gates.trade_violations(spread) == []
 
@@ -789,3 +803,16 @@ def test_risk_layer_refuses_by_name():
                 "debit": 700}]
     assert any("daily debit" in r for r in risk.order_refusals(
         ok_order, standing, armed, fat_day))
+
+
+def test_an_idea_may_predate_its_contracts():
+    import gates
+
+    draft = {"thesis": "developing in the workshop",
+             "invalidation": "to be defined before any entry",
+             "evidence": [], "state": "idea", "contracts": []}
+    assert gates.trade_violations(draft) == []
+    # but a WATCHING trade without contracts is still a violation
+    watching = {**draft, "state": "watching"}
+    assert any("contracts" in v or "one through five" in v
+               for v in gates.trade_violations(watching))

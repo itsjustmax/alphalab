@@ -164,10 +164,17 @@ def trade_violations(trade):
     if unknown:
         violations.append(f"unknown field(s): {', '.join(sorted(unknown))}")
     missing = TRADE_REQUIRED - set(trade)
+    # an IDEA may predate its contracts — the workshop's first job is
+    # finding them; every later state requires them
+    if str(trade.get("state", "")).strip() == "idea" \
+            and "contracts" in missing and not trade.get("contracts"):
+        missing = missing - {"contracts"}
     if missing:
         violations.append(f"missing field(s): {', '.join(sorted(missing))}")
     contracts = trade.get("contracts")
-    if "contracts" in trade:
+    if "contracts" in trade and not (
+            str(trade.get("state", "")).strip() == "idea"
+            and isinstance(contracts, list) and not contracts):
         if (not isinstance(contracts, list) or not 1 <= len(contracts) <= 5
                 or any(not (isinstance(item, str) and item.strip()
                             and len(item) <= 120)

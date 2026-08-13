@@ -325,6 +325,7 @@
     color: var(--muted); }
   .thoughts-cell p { margin: .1rem 0 .4rem; font-size: .76rem; }
   .thought-line { font-size: .74rem; margin: .15rem 0; }
+  .thoughts-cell .thread { max-height: 180px; overflow-y: auto; }
   #overlay-composer { max-width: none; margin-top: .4rem; }
   .cockpit .desk-rename.armed { border-color: var(--up);
     color: var(--up); font-weight: 700; }
@@ -1289,9 +1290,59 @@ function renderTrades(view) {
     .filter(([key, value]) => key.startsWith("trades/") && value)
     .sort(([a], [b]) => a.localeCompare(b))
     .sort(([, a], [, b]) => (order[a?.state] ?? 4) - (order[b?.state] ?? 4));
-  if (!rows.length) return null;
   const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "Trades — simulated, paper only"));
+  const heading = el("h2", {}, "Trades — simulated, paper only");
+  const newTrade = el("button", {type: "button", class: "desk-rename",
+    title: "open a workshop: develop a new trade idea with an agent"},
+    "＋ new trade");
+  newTrade.addEventListener("click", () => {
+    const seed = el("input", {type: "text", placeholder:
+      "the idea in a phrase — “TBBB squeeze continuation”…",
+      style: "width:22rem"});
+    const go = el("button", {type: "button", class: "desk-rename"}, "open workshop");
+    const start = async () => {
+      const idea = seed.value.trim();
+      if (!idea) return;
+      const slug = idea.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "").slice(0, 40) || "new-idea";
+      await api("POST", `/environments/${envId}/context`, {
+        key: `trades/${slug}`,
+        value: {thesis: idea,
+          invalidation: "to be defined in the workshop — no entry can " +
+            "be staged until this names what would prove the idea wrong",
+          evidence: [], contracts: [], state: "idea",
+          as_of: new Date().toISOString().slice(0, 19) + "+00:00"}});
+      await api("POST", `/environments/${envId}/say`,
+        {text: `Workshop opened for trades/${slug}: ${idea} — bring ` +
+          `data, propose candidate contracts, sharpen the thesis and ` +
+          `invalidation with me.`});
+      await markMemberTurn();
+      await api("POST", `/environments/${envId}/build`, {});
+      lastRendered = null;
+      if (lastView) {
+        lastView.context[`trades/${slug}`] = {thesis: idea,
+          invalidation: "(workshop)", evidence: [], contracts: [],
+          state: "idea"};
+        render(lastView);
+      }
+      openChartModal(`trades/${slug}`);
+      setTimeout(() => document.querySelector(
+        "#overlay-composer input")?.focus(), 900);
+    };
+    go.addEventListener("click", start);
+    seed.addEventListener("keydown", event => {
+      if (event.key === "Enter") start();
+    });
+    newTrade.replaceWith(seed, go);
+    seed.focus();
+  });
+  heading.append(newTrade);
+  section.append(heading);
+  if (!rows.length) {
+    section.append(el("p", {class: "muted"},
+      "no trades yet — press ＋ new trade to open a workshop"));
+    return section;
+  }
   const table = el("table");
   const head = el("tr");
   for (const column of ["trade", "state", "position", "pnl", "premium",
@@ -2238,16 +2289,24 @@ function renderChartModal() {
   document.getElementById("chart-modal-title").textContent =
     `${label} — trade cockpit`;
   const body = document.getElementById("chart-modal-body");
+  const workshop = trade.state === "idea"
+    && !(trade.contracts || []).length;
   const thoughts = el("div", {class: "thoughts-cell"});
-  thoughts.append(el("h4", {}, "your thoughts on this trade"));
-  thoughts.append(el("p", {class: "muted"},
-    "talk to the trade's agent — it sees the thesis, the candidate " +
-    "contracts, the live data, the plan state, and every study note " +
-    "below, and can modify any of it on your word"));
-  const recent = (lastView?.conversation || []).slice(-40).filter(line =>
+  thoughts.append(el("h4", {}, workshop
+    ? "workshop — develop this idea with your agent"
+    : "your thoughts on this trade"));
+  thoughts.append(el("p", {class: "muted"}, workshop
+    ? "a persistent working conversation: the agent brings receipted " +
+      "data in as cells below, proposes candidate contracts, and " +
+      "sharpens the thesis and invalidation with you — when the trade " +
+      "is ready, its lifecycle continues on the Trades panel"
+    : "talk to the trade's agent — it sees the thesis, the candidate " +
+      "contracts, the live data, the plan state, and every study note " +
+      "below, and can modify any of it on your word"));
+  const recent = (lastView?.conversation || []).slice(-60).filter(line =>
     String(line.text || "").toLowerCase()
       .includes(state.tradeKey.slice(7).split("-")[0]))
-    .slice(-3);
+    .slice(workshop ? -10 : -3);
   for (const line of recent)
     thoughts.append(el("div", {class: "muted thought-line"},
       `${line.name}: ${String(line.text).slice(0, 150)}`));
@@ -2291,6 +2350,16 @@ function renderChartModal() {
       mount, envId, token, scope: "overlay",
       prelude: "CURRENT COCKPIT (the member's live picture):\n" +
         cockpitBrief(meta, state) +
+        ((lastView?.context?.[state.tradeKey]?.state === "idea"
+          && !(lastView?.context?.[state.tradeKey]?.contracts || []).length)
+          ? "\nWORKSHOP MODE: this idea has no contracts yet. Your job " +
+            "in this conversation: bring receipted data (cockpit/" +
+            state.tradeKey.slice(7) + "/ cells with refresh programs), " +
+            "propose candidate contracts and UPDATE trades/" +
+            state.tradeKey.slice(7) + " (contracts, sharper thesis, a " +
+            "real invalidation), and say what you found. The member " +
+            "advances the trade when ready — never stage entries from " +
+            "the workshop.\n" : "") +
         `\n\nAbout trades/${state.tradeKey.slice(7)}: build for ` +
         "this trade's cockpit. Three surfaces: (1) overlays/" +
         state.tradeKey.slice(7) + "-<slug> = chart overlays {target: " +

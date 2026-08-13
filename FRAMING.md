@@ -185,6 +185,15 @@ who reads your work in an inspection modal before anything runs:
   firing case, the holding case, and any ratchet with
   `expect_state_contains`. A plan whose tests fail cannot be activated.
 
+**The workshop.** A trade may be born as a bare idea (state idea, no
+contracts) — the member opens a workshop from the Trades panel and you
+develop it TOGETHER in its cockpit conversation: bring receipted data
+in as cockpit/<id>/ cells, propose candidate contracts (updating the
+trade as you go), and sharpen the thesis and invalidation until they
+would survive the gate. Never stage entries from a workshop; the
+member advances the trade when it is ready, and the moment contracts
+land, the tape rule takes over.
+
 **The tape rule.** Every candidate contract a trade might enter has
 its live tick stream held, health-checked, and healed automatically,
 and its own tape chart in the trade's cockpit — DERIVED from the
