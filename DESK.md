@@ -90,8 +90,11 @@ tick's clock in the tooltip.
 
 A member can run several desks at once — each environment is its own
 board with its own trades, plans, and autopilot state. The header's
-"desks" link opens the platform home, which lists every desk and opens
-fresh ones (mess one up, start clean; the old desk keeps its history).
+"desks" menu lives INSIDE AlphaLab: it lists this harness's desks by
+what each watches (watchlist, open positions, or "fresh desk"), switches
+between them, and opens fresh ones (mess one up, start clean; the old
+desk keeps its history). The platform home shows one AlphaLab entry
+that lands on the most recently active desk.
 The autopilot runs as a fleet: it discovers every environment running
 this harness, keeps one pilot (own state, own daily budget) per desk,
 and sweeps streams once with the union of every desk's holders, so one

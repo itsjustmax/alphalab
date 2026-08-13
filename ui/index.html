@@ -37,10 +37,24 @@
   header { display: flex; align-items: baseline; gap: .9rem; flex-wrap: wrap; }
   header .controls { margin-left: auto; display: flex; gap: .5rem;
                      align-items: center; }
+  #desk-switch { position: relative; }
   #desks-link { color: var(--muted); font-size: .78rem;
-    text-decoration: none; border: 1px solid var(--border);
+    background: none; cursor: pointer; font-family: inherit;
+    border: 1px solid var(--border);
     border-radius: 8px; padding: .3rem .6rem; }
   #desks-link:hover { color: var(--text); border-color: var(--accent); }
+  #desk-menu { position: absolute; right: 0; top: 2.1rem; z-index: 60;
+    min-width: 280px; background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.35); padding: .3rem; }
+  .desk-item { display: flex; flex-direction: column; gap: .1rem;
+    width: 100%; text-align: left; background: none; border: 0;
+    color: var(--text); font: inherit; font-size: .82rem;
+    padding: .5rem .6rem; border-radius: 8px; cursor: pointer; }
+  .desk-item:hover { background: var(--surface-2); }
+  .desk-item.here { border: 1px solid var(--accent); cursor: default; }
+  .desk-item.subtle b { color: var(--muted); font-weight: 500; }
+  .desk-item .muted { font-size: .74rem; }
   h1 { font-size: 1.7rem; margin: 0; letter-spacing: -.02em; font-weight: 750;
        background: linear-gradient(100deg, var(--text) 60%, var(--accent));
        -webkit-background-clip: text; background-clip: text;
@@ -243,7 +257,11 @@
 <header>
   <h1 id="title">…</h1>
   <span class="controls">
-    <a id="desks-link" title="all desks — open a fresh one if this one goes sideways">desks</a>
+    <span id="desk-switch">
+      <button id="desks-link" type="button"
+        title="this harness's desks — switch, or open a fresh one">desks ▾</button>
+      <div id="desk-menu" hidden></div>
+    </span>
     <select id="font-pick" title="typeface"></select>
     <button id="theme-toggle" title="light / dark">◐</button>
   </span>
@@ -347,9 +365,69 @@ function applyTheme() {
   document.documentElement.dataset.theme =
     localStorage.getItem("alphalab-theme") || "dark";
 }
-// Every desk is one environment; the platform home lists them all and
-// opens fresh ones — mess a desk up, start clean, history kept.
-document.getElementById("desks-link").href = `/app?token=${token}`;
+// Every desk is one environment of this harness, and picking between
+// them happens HERE — the platform home shows one AlphaLab entry; the
+// desks menu switches, opens fresh ones (mess one up, start clean,
+// history kept), and names each desk by what it watches.
+async function deskLabel(id) {
+  try {
+    const view = await api("GET", `/environments/${id}`);
+    const ctx = view.context || {};
+    let watch = ctx.watchlist;
+    if (typeof watch === "string") watch = watch.replace(/,/g, " ").split(/\s+/);
+    const positions = Object.values(ctx).filter(v =>
+      v && v.state === "open-simulated").length;
+    const parts = [];
+    if (Array.isArray(watch) && watch.length) parts.push(watch.slice(0, 4).join(" "));
+    if (positions) parts.push(`${positions} open position${positions > 1 ? "s" : ""}`);
+    if (!parts.length && ctx.topic) parts.push(String(ctx.topic).slice(0, 40));
+    if (!parts.length) parts.push("fresh desk — intake waiting");
+    return parts.join(" · ");
+  } catch { return "unreachable"; }
+}
+async function openDeskMenu() {
+  const menu = document.getElementById("desk-menu");
+  if (!menu.hidden) { menu.hidden = true; return; }
+  menu.replaceChildren(el("div", {class: "muted", style: "padding:.4rem .6rem"}, "…"));
+  menu.hidden = false;
+  const listing = (await api("GET", "/environments"))
+    .filter(env => env.harness === (lastView?.harness?.name || "AlphaLab"))
+    .sort((a, b) => (b.last_activity_us || 0) - (a.last_activity_us || 0));
+  menu.replaceChildren();
+  for (const env of listing) {
+    const here = env.environment_id === envId;
+    const item = el("button", {type: "button",
+      class: "desk-item" + (here ? " here" : "")});
+    item.append(el("b", {}, `desk ${env.environment_id.slice(0, 8)}`
+      + (here ? " — you are here" : "")));
+    const sub = el("span", {class: "muted"}, "…");
+    item.append(sub);
+    deskLabel(env.environment_id).then(label => sub.textContent = label);
+    if (!here) item.addEventListener("click", () =>
+      location.href = `/app/${env.environment_id}?token=${token}`);
+    menu.append(item);
+  }
+  const fresh = el("button", {type: "button", class: "desk-item"});
+  fresh.append(el("b", {}, "＋ open a fresh desk"));
+  fresh.addEventListener("click", async () => {
+    const opened = await api("POST", "/environments",
+      {harness: (lastView?.harness?.slug) || "alphalab"});
+    location.href = `/app/${opened.environment_id}?token=${token}`;
+  });
+  menu.append(fresh);
+  const home = el("button", {type: "button", class: "desk-item subtle"});
+  home.append(el("b", {}, "Manifold home"));
+  home.addEventListener("click", () => location.href = `/app?token=${token}`);
+  menu.append(home);
+}
+document.getElementById("desks-link").addEventListener("click", event => {
+  event.stopPropagation();
+  openDeskMenu();
+});
+document.addEventListener("click", event => {
+  const menu = document.getElementById("desk-menu");
+  if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+});
 document.getElementById("theme-toggle").addEventListener("click", () => {
   const current = localStorage.getItem("alphalab-theme") || "dark";
   localStorage.setItem("alphalab-theme",
