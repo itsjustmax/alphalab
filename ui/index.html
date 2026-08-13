@@ -840,6 +840,14 @@ function focusPrompt(question) {
       parts.push(`Evidence ${evidenceKey}: ` +
         JSON.stringify(lastView?.context?.[evidenceKey]).slice(0, 4000));
   }
+  const houseRules = Object.entries(lastView?.context || {})
+    .filter(([key, value]) => key.startsWith("framing/") && value)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `- [${key.slice(8)}] ${
+      typeof value === "object" ? value.text || "" : value}`);
+  if (houseRules.length)
+    parts.push("HOUSE RULES OF THIS DESK (the member's standing " +
+      "amendments — honor them):", ...houseRules);
   parts.push("Answer from this cell's data only; keep clocks with claims;",
     "if the data cannot answer, say exactly what is missing. Be concise.",
     "No markdown headers. Conversation so far:");
