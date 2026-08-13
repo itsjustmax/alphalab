@@ -182,7 +182,18 @@
                     text-transform: uppercase; letter-spacing: .08em; }
   .fill-line { font-family: var(--mono); font-size: .8rem; }
   .violation { color: var(--down); font-size: .82rem; margin: .3rem 0 0; }
-  td.up, p.up { color: var(--up); } td.down { color: var(--down); }
+  td.up, p.up, div.up { color: var(--up); }
+  td.down, div.down { color: var(--down); }
+  .mark-stale { opacity: .8; }
+  .news-feed { display: flex; flex-direction: column; gap: .35rem; }
+  .news-item { font-size: .84rem; line-height: 1.35; }
+  .news-item a { color: var(--text); text-decoration: none; }
+  .news-item a:hover { color: var(--accent); text-decoration: underline; }
+  .news-item .muted { font-size: .72rem; }
+  .watchlist-head { display: flex; align-items: center; gap: 1rem;
+    flex-wrap: wrap; }
+  .watchlist-head .manifold-composer { flex: 1; min-width: 260px;
+    margin: 0; }
   .plan-row { border: 1px solid var(--border); border-radius: 10px;
     padding: .7rem .85rem; margin: .55rem 0; background: var(--surface); }
   .plan-head { display: flex; align-items: center; gap: .6rem; }
@@ -214,8 +225,11 @@
   .mgmt-words { font-style: italic; font-size: .8rem;
     color: var(--muted); margin: .3rem 0 .35rem; }
   td.mgmt { min-width: 220px; }
-  .spark-cell { min-width: 118px; }
+  .spark-cell { min-width: 118px; margin-top: .3rem; }
   .spark-cell svg { display: block; }
+  .pnl-joined { min-width: 130px; }
+  .contract-cell { white-space: nowrap; min-width: 175px;
+    font-family: var(--mono); font-size: .82rem; }
   .choices { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0; }
   .choices button { font-size: .85rem; }
   .choices button.selected { border-color: var(--accent); color: var(--accent); }
@@ -828,7 +842,30 @@ function renderWatchlist(view) {
             && !watched.has(key.slice(7).toUpperCase()));
   if (!symbols.length && !quoted.length) return null;
   const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "Watchlist"));
+  const head = el("div", {class: "watchlist-head"});
+  head.append(el("h2", {}, "Watchlist"));
+  const mount = el("span", {id: "watchlist-composer"});
+  head.append(mount);
+  section.append(head);
+  composerReady.then(() => {
+    if (!mount.isConnected || mount.childElementCount) return;
+    const form = Manifold.composer({
+      mount, envId, token, scope: "watchlist",
+      prelude: "About the watchlist: resolve any company names, tickers, " +
+        "or news stories mentioned to exact symbols; add or remove them " +
+        "from the `watchlist` entry; wire a news card (rss_fetch) for " +
+        "new names when stories matter; confirm what changed in the " +
+        "room. Member says: ",
+      placeholder: "work the watchlist — “add Broadcom and Micron”, " +
+        "“which chip names moved on this story?”",
+    });
+    form.addEventListener("manifold:submitted", () => {
+      markMemberTurn();
+      turnActive = true;
+      turnStarted = Date.now();
+      updateLiveness();
+    });
+  }).catch(() => {});
   const strip = el("div", {class: "strip"});
   for (const [key, entry] of quoted) {
     const symbol = key.slice(7).toUpperCase();
@@ -1060,7 +1097,9 @@ function renderPositions(view) {
       ? `${f.quantity} @ $${f.price} (${f.bid}×${f.ask}) · ` +
         String(f.observed_at).slice(0, 10)
       : "—"));
-    const pnl = el("td", {class: "val"}, "—");
+    const joined = el("td", {class: "pnl-joined"});
+    const pnl = el("div", {class: "val"}, "—");
+    joined.append(pnl);
     // Prefer a label the stream lane can parse (the canonical 8-digit
     // date form) — a fill recorded in display notation ("NVDA 8/21
     // 235C") would otherwise quote the STOCK and mark the option wrong.
@@ -1078,23 +1117,16 @@ function renderPositions(view) {
       pnlWatch.set(key, {cell: pnl, entry: f.price,
                          quantity: f.quantity || 1, label: held});
       paintPnlSoon();
+      joined.append(premiumSpark(key, c, held));
     } else if (c.exit && f) {
       const mult = /\d+(?:\.\d+)?[CP]\b/i.test(held) ? 100 : 1;
       const dollars = (c.exit.price - f.price) * (f.quantity || 1) * mult;
       pnl.textContent = `${dollars >= 0 ? "+" : "−"}$` +
-        `${Math.abs(dollars).toFixed(2)} realized`;
+        `${Math.abs(dollars).toFixed(2)} realized at $${c.exit.price}`;
       pnl.className = "val " + (dollars >= 0 ? "up" : "down");
+      joined.append(premiumSpark(key, c, held));
     }
-    line.append(pnl);
-    line.append(premiumSparkCell(key, c, held));
-    let result = c.state === "open-simulated" ? "open" : "—";
-    if (c.exit && f) {
-      const diff = c.exit.price - f.price;
-      const pct = f.price ? 100 * diff / f.price : 0;
-      result = `$${c.exit.price} (${diff >= 0 ? "+" : ""}${diff.toFixed(2)}` +
-        `/contract, ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)`;
-    }
-    line.append(el("td", {class: "val"}, result));
+    line.append(joined);
     const underlying = el("td", {class: "val"}, "—");
     const symbol = contractLabel((c.contracts || [])[0]
       || (c.fill || {}).contract || "").split(/\s+/)[0];
@@ -1151,10 +1183,16 @@ async function pnlLoop() {
     const mult = args.sec_type === "OPT" ? 100 : 1;
     const dollars = (mark - watch.entry) * watch.quantity * mult;
     const pct = watch.entry ? 100 * (mark - watch.entry) / watch.entry : 0;
+    const tickClock = Date.parse(quote.observed_at);
+    const tickAge = isNaN(tickClock) ? null : (Date.now() - tickClock) / 1000;
+    const staleNote = tickAge !== null && tickAge > 180
+      ? ` · stale ${tickAge > 5400 ? Math.round(tickAge / 3600) + "h"
+                                   : Math.round(tickAge / 60) + "m"}` : "";
     watch.cell.textContent =
       `${dollars >= 0 ? "+" : "−"}$${Math.abs(dollars).toFixed(2)} ` +
-      `(${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%) · mark $${mark}`;
-    watch.cell.className = "val " + (dollars >= 0 ? "up" : "down");
+      `(${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%) · mark $${mark}${staleNote}`;
+    watch.cell.className = "val " + (dollars >= 0 ? "up" : "down")
+      + (staleNote ? " mark-stale" : "");
     watch.cell.title = `bid-side mark, streaming as of ` +
       `${quote.observed_at || "?"} · entry $${watch.entry}`;
     pnlMemory[key] = {text: watch.cell.textContent,
@@ -1165,8 +1203,8 @@ async function pnlLoop() {
 // The premium's path since entry, as a tiny two-tone area: green
 // above the entry price, red below — the trade's whole life at a
 // glance. Hourly broker bars, cached 15 minutes.
-function premiumSparkCell(tradeKey, trade, label) {
-  const cell = el("td", {class: "spark-cell"});
+function premiumSpark(tradeKey, trade, label) {
+  const cell = el("div", {class: "spark-cell"});
   const fill = trade.fill;
   const args = contractArgs(label);
   if (!fill || args.sec_type !== "OPT") { cell.textContent = "—"; return cell; }
@@ -1631,7 +1669,26 @@ function renderWidgets(view) {
     cardHead.append(focusChip(key, spec, "structure"));
     cardHead.append(hideChip(key));
     card.append(cardHead);
-    if (spec.kind === "metric") {
+    if (spec.kind === "news") {
+      const feed = el("div", {class: "news-feed"});
+      const stories = (Array.isArray(spec.items) && spec.items)
+        || spec.news?.items || [];
+      if (!stories.length) feed.append(el("p", {class: "muted"},
+        spec.refresh_error
+          ? `feed failed: ${spec.refresh_error}` : "awaiting first stories"));
+      for (const story of stories.slice(0, 12)) {
+        const row = el("div", {class: "news-item"});
+        const link = el("a", {href: story.link || "#", target: "_blank",
+          rel: "noopener noreferrer"}, story.title || "(untitled)");
+        row.append(link);
+        if (story.published)
+          row.append(el("span", {class: "muted"},
+            ` ${String(story.published).slice(0, 22)}`));
+        if (story.summary) row.title = story.summary;
+        feed.append(row);
+      }
+      card.append(feed);
+    } else if (spec.kind === "metric") {
       card.append(el("div", {class: "metric"}, String(spec.value ?? "—")));
       if (spec.label) card.append(el("div", {class: "metric-label"}, spec.label));
       if (spec.detail) card.append(el("p", {}, spec.detail));

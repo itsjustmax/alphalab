@@ -683,3 +683,32 @@ def test_a_fill_under_another_notation_belongs_to_its_trade():
     fill = make_fill(contract="NVDA 8/14 190C")
     case = make_case(state="open-simulated", fill=fill)
     assert gates.trade_violations(case) == []
+
+
+def test_rss_fetch_parses_rss_and_atom_and_refuses_local():
+    import web
+
+    rss = b"""<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>NVDA News</title>
+      <item><title>Story one</title><link>https://x.test/1</link>
+        <pubDate>Thu, 13 Aug 2026 13:15:00 GMT</pubDate>
+        <description>&lt;p&gt;Body&lt;/p&gt;</description></item>
+      <item><title>Story two</title><link>https://x.test/2</link></item>
+    </channel></rss>"""
+    answer = web.rss_fetch({"url": "https://feeds.test/nvda"},
+                           opener=lambda url: (url, "application/xml", rss))
+    assert answer["ok"] and len(answer["data"]["items"]) == 2
+    assert answer["data"]["items"][0]["title"] == "Story one"
+    assert answer["data"]["items"][0]["summary"] == "Body"
+
+    atom = b"""<?xml version="1.0"?>
+    <feed xmlns="http://www.w3.org/2005/Atom"><title>Macro</title>
+      <entry><title>Entry</title>
+        <link href="https://x.test/a"/><updated>2026-08-13T13:00:00Z</updated>
+      </entry></feed>"""
+    answer = web.rss_fetch({"url": "https://feeds.test/macro"},
+                           opener=lambda url: (url, "application/xml", atom))
+    assert answer["ok"] and answer["data"]["items"][0]["link"] == "https://x.test/a"
+
+    refused = web.rss_fetch({"url": "http://localhost:8642/feed"})
+    assert not refused["ok"] and "refused" in refused["summary"]

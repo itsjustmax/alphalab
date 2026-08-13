@@ -204,6 +204,19 @@ clocks with claims; serve cache as cache, never as fresh; a failure is
 a fact worth stating — "refresh failed" is information, silence is
 deception.
 
+## The news lane
+
+`rss_fetch` reads any public RSS/Atom feed as bounded story rows. Keep
+the watchlist covered: one news card per name that matters (kind
+"news", refresh running rss_fetch on that name's headline feed —
+Yahoo's is `https://feeds.finance.yahoo.com/rss/2.0/headline?s=SYMBOL`
+— minutes: 30-60), plus a macro feed if the member wants one. Stories
+are collect-stage material: a story that moves a thesis becomes a
+findings/ entry with the link and clock; the card itself is just the
+wire. When the member's watchlist message names a story or a company,
+resolve it to exact tickers, update the `watchlist` entry, and wire
+the news card for new names in the same turn.
+
 ## The research funnel — how the desk stays alive AND tidy
 
 Research is a funnel, not a museum. Every cell is a claim on the

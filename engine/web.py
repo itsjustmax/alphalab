@@ -128,3 +128,83 @@ def web_fetch(arguments, opener=None):
          "chars": len(text), "text": text},
         gaps=gaps,
     )
+
+
+def rss_fetch(arguments, opener=None):
+    """One RSS/Atom feed → bounded story rows, clocked and sourced.
+
+    The desk's news lane: agents wire a card per feed (a ticker's
+    headline feed, a macro wire) and read the landed items next turn —
+    stories worth keeping become findings with their link and clock.
+    Same door policy as web_fetch: public http(s) only, never the
+    member's machine.
+    """
+
+    import xml.etree.ElementTree as ElementTree
+
+    url = str(arguments.get("url") or "").strip()
+    blocked = blocked_reason(url)
+    if blocked:
+        return receipt(f"refused: {blocked}", ok=False, gaps=[blocked])
+    limit = min(int(arguments.get("limit") or 12), 30)
+    opener = opener or _default_opener
+    try:
+        _final_url, _content_type, raw = opener(url)
+    except Exception as error:
+        return receipt(f"the feed did not answer: {str(error)[:200]}",
+                       ok=False, gaps=[str(error)[:200]])
+    try:
+        root = ElementTree.fromstring(raw.decode("utf-8", "replace"))
+    except ElementTree.ParseError as error:
+        return receipt(f"the feed is not parseable XML: {str(error)[:120]}",
+                       ok=False, gaps=[f"parse error: {str(error)[:120]}"])
+
+    def _text(node, *names):
+        for name in names:
+            for child in node.iter():
+                tag = child.tag.rsplit("}", 1)[-1]
+                if tag == name and (child.text or "").strip():
+                    return child.text.strip()
+        return ""
+
+    def _first(node, *names):
+        for child in node:
+            if child.tag.rsplit("}", 1)[-1] in names:
+                return child
+        return None
+
+    items = []
+    feed_title = ""
+    channel = _first(root, "channel")
+    entries = []
+    if channel is not None:                      # RSS 2.0
+        title_node = _first(channel, "title")
+        feed_title = (title_node.text or "").strip() if title_node is not None else ""
+        entries = [child for child in channel
+                   if child.tag.rsplit("}", 1)[-1] == "item"]
+    elif root.tag.rsplit("}", 1)[-1] == "feed":  # Atom
+        title_node = _first(root, "title")
+        feed_title = (title_node.text or "").strip() if title_node is not None else ""
+        entries = [child for child in root
+                   if child.tag.rsplit("}", 1)[-1] == "entry"]
+    for entry in entries[:limit]:
+        title_node = _first(entry, "title")
+        link_node = _first(entry, "link")
+        link = ""
+        if link_node is not None:
+            link = (link_node.get("href") or link_node.text or "").strip()
+        summary = _text(entry, "description", "summary", "content")
+        _summary_title, summary_text = html_to_text(summary)
+        items.append({
+            "title": (title_node.text or "").strip()
+            if title_node is not None else "(untitled)",
+            "link": link,
+            "published": _text(entry, "pubDate", "published", "updated"),
+            "summary": summary_text[:300],
+        })
+    if not items:
+        return receipt(f"{url}: the feed parsed but carries no items",
+                       ok=False, gaps=["no <item> or <entry> elements"])
+    return receipt(
+        f"{feed_title or url}: {len(items)} stor{'y' if len(items) == 1 else 'ies'}",
+        {"feed_title": feed_title, "url": url, "items": items})

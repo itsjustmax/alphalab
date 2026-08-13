@@ -143,6 +143,7 @@ OPERATIONS = {
     "fill_watch": gates.fill_watch,
     "live_quote": gates.live_quote,
     "web_fetch": web.web_fetch,
+    "rss_fetch": web.rss_fetch,
     "live_quotes": gates.live_quotes,
     "form_check": forms.form_check,
     "plan_check": plans.plan_check,

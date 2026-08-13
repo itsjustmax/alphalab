@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.13.1",
+  "version": "2.14.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -139,6 +139,19 @@
         "python3",
         "tools/run.py",
         "symbol_zones"
+      ]
+    },
+    {
+      "name": "rss_fetch",
+      "description": "One RSS/Atom feed as bounded story rows — the news lane. Wire a card per feed (e.g. a ticker's headline feed) with a refresh program; read the landed items next turn; stories worth keeping become findings with link and clock. data: {feed_title, url, items: [{title, link, published, summary}]}.",
+      "args": {
+        "url": "the feed URL",
+        "limit": "stories (default 12, max 30)"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "rss_fetch"
       ]
     },
     {

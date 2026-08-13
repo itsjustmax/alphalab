@@ -631,3 +631,39 @@ def test_retired_evidence_is_a_named_violation():
     assert list(found) == ["trades/nvda"]
     assert "findings/f1" in found["trades/nvda"][0]
     # closed trades are history; their evidence may retire freely
+
+
+def test_position_contract_streams_are_healed_too(tmp_path):
+    import datetime
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    calls = []
+    now = datetime.datetime(2026, 8, 13, 14, 0,
+                            tzinfo=datetime.timezone.utc)
+
+    def fake_api(method, path, body=None):
+        args = (body or {}).get("args") or {}
+        if path.endswith("/tools/live_quote"):
+            return {"result": {"ok": True, "data": {"quote": {
+                "bid": 0.94, "last": 0.95,
+                "observed_at": "2026-08-12T19:59:00+00:00"}}}}  # stale
+        if path.endswith("/tools/market_stream"):
+            calls.append((args.get("action"), args.get("symbol"),
+                          args.get("strike")))
+            return {"result": {"ok": True, "data": {}}}
+        if path.endswith("/context"):
+            return {}
+        return {}
+
+    pilot._api = fake_api
+    context = {"trades/nvda": {
+        "state": "open-simulated",
+        "contracts": ["NVDA 20260821 235C"],
+        "fill": {"contract": "NVDA 20260821 235C", "price": 0.96,
+                 "quantity": 1,
+                 "observed_at": "2026-08-12T15:24:00-04:00"}}}
+    report = pilot.stream_health(context, now)
+    assert "NVDA 20260821 235C" in report["stale"]
+    # healed with FULL option args, stop then start
+    assert calls[0][0] == "stop" and calls[0][2] == 235.0
+    assert calls[1][0] == "start" and calls[1][1] == "NVDA"

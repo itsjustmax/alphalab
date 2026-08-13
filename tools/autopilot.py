@@ -767,7 +767,25 @@ class Pilot:
         if isinstance(watchlist, str):
             watchlist = watchlist.replace(",", " ").split()
         symbols = [str(s).strip().upper() for s in (watchlist or []) if s]
-        if not symbols:
+        # Open positions' own contracts are watched the same way — the
+        # PnL mark reads their stream, so a dead one lies to the member.
+        contracts = []
+        for key, trade in (context or {}).items():
+            if not key.startswith("trades/") or not isinstance(trade, dict):
+                continue
+            if trade.get("state") != "open-simulated":
+                continue
+            label = str((trade.get("fill") or {}).get("contract") or "")
+            parsed = parse_contract_label(label)
+            if "expiration" not in parsed:
+                for candidate in (trade.get("contracts") or []):
+                    parsed = parse_contract_label(str(candidate))
+                    if "expiration" in parsed:
+                        label = str(candidate)
+                        break
+            if "expiration" in parsed:
+                contracts.append((label, parsed))
+        if not symbols and not contracts:
             return None
         try:
             reply = self._api(
@@ -781,6 +799,27 @@ class Pilot:
             print(f"[{utc_now():%H:%M:%S}] stream health check failed: "
                   f"{str(error)[:120]}", flush=True)
         health, stale = {}, []
+        stale_contracts = []
+        for label, parsed in contracts:
+            try:
+                reply = self._api(
+                    "POST",
+                    f"/environments/{self.environment}/tools/live_quote",
+                    {"args": parsed})
+                quote = (((reply.get("result") or {}).get("data") or {})
+                         .get("quote")) or {}
+            except Exception:
+                quote = {}
+            clock = gates.parse_clock(quote.get("observed_at"))
+            age = None if clock is None \
+                else max(0, int((now - clock).total_seconds()))
+            health[label] = None if quote.get("bid") is None else {
+                "last": quote.get("last"), "bid": quote.get("bid"),
+                "observed_at": quote.get("observed_at"),
+                "age_seconds": age}
+            if age is None or age > 180:
+                stale.append(label)
+                stale_contracts.append((label, parsed))
         for symbol in symbols:
             quote = quotes.get(symbol)
             if not isinstance(quote, dict) or quote.get("last") is None:
@@ -807,6 +846,7 @@ class Pilot:
             if last is None or (now - last).total_seconds() >= 300:
                 warm.append(symbol)
                 attempts[symbol] = now.isoformat(timespec="seconds")
+        stale_contract_map = dict(stale_contracts)
         if warm:
             self._save()
             # Stop-then-start, not a plain warm: the engine's start
@@ -814,9 +854,11 @@ class Pilot:
             # worker ("already active", zero live workers) — clearing
             # the phantom first is what actually revives the stream.
             for symbol in warm:
-                request = {"symbol": symbol}
-                if symbol in gates.INDEX_SYMBOLS:
-                    request["sec_type"] = "IND"
+                request = stale_contract_map.get(symbol) \
+                    or {"symbol": symbol}
+                if "sec_type" not in request \
+                        and symbol in gates.INDEX_SYMBOLS:
+                    request = {"symbol": symbol, "sec_type": "IND"}
                 try:
                     self._api(
                         "POST",
