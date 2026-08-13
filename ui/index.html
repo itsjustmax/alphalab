@@ -1523,26 +1523,68 @@ function tickPane(meta) {
   if (tapeMemory[meta.label])
     drawTape(chart, tapeMemory[meta.label], meta.label);
   else chart.textContent = "…";
-  const args = {...contractArgs(meta.label), action: "latest", limit: 200};
-  const crawl = async () => {
-    if (!chart.isConnected) return;
-    try {
-      const reply = await api("POST",
-        `/environments/${envId}/tools/market_stream`, {args});
-      const rows = reply.result?.data?.rows || [];
-      if (rows.length) {
-        tapeMemory[meta.label] = rows;
-        drawTape(chart, rows, meta.label);
-      } else if (!tapeMemory[meta.label]) {
-        chart.replaceChildren(el("p", {class: "muted"},
-          "no persisted ticks yet — the stream is warming"));
+  // Preferred lane: the tick relay (localhost:8643) — a persistent
+  // process reading Timescale at 10Hz and PUSHING each new tick over
+  // SSE within ~100ms of persistence. Fallback: 5s tool polling.
+  const contract = contractArgs(meta.label);
+  let buffer = (tapeMemory[meta.label] || []).slice();  // newest first
+  let drawQueued = false;
+  const paint = () => {
+    if (drawQueued) return;
+    drawQueued = true;
+    requestAnimationFrame(() => {
+      drawQueued = false;
+      if (chart.isConnected && buffer.length)
+        drawTape(chart, buffer, meta.label);
+    });
+  };
+  const relayParams = new URLSearchParams({...contract, token});
+  let source = null;
+  let live = false;
+  try {
+    source = new EventSource(
+      `http://127.0.0.1:8643/tape?${relayParams}`);
+    source.onmessage = event => {
+      if (!chart.isConnected) { source.close(); return; }
+      live = true;
+      const payload = JSON.parse(event.data);
+      if (payload.backlog) {
+        buffer = payload.backlog.slice().reverse();
+      } else {
+        buffer.unshift(payload);
+        if (buffer.length > 300) buffer.length = 300;
       }
-    } catch { /* keep the last tape through blips */ }
+      tapeMemory[meta.label] = buffer;
+      head.querySelector(".muted").textContent =
+        "live push · every tick, persisted";
+      paint();
+    };
+    source.onerror = () => { live = false; };
+  } catch { /* no relay — polling covers it */ }
+  const args = {...contract, action: "latest", limit: 200};
+  const crawl = async () => {
+    if (!chart.isConnected) { if (source) source.close(); return; }
+    if (!live) {
+      try {
+        const reply = await api("POST",
+          `/environments/${envId}/tools/market_stream`, {args});
+        const rows = reply.result?.data?.rows || [];
+        if (rows.length) {
+          buffer = rows;
+          tapeMemory[meta.label] = rows;
+          paint();
+        } else if (!tapeMemory[meta.label]) {
+          chart.replaceChildren(el("p", {class: "muted"},
+            "no persisted ticks yet — the stream is warming"));
+        }
+      } catch { /* keep the last tape through blips */ }
+    }
     setTimeout(crawl, 5000);
   };
   // first crawl AFTER the pane mounts — an isConnected guard checked
   // during construction would end the loop before it began
   setTimeout(crawl, 100);
+  if (buffer.length) paint();
   return pane;
 }
 function chartPane(kind, meta, state) {
