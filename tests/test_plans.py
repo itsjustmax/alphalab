@@ -301,6 +301,7 @@ def _live_context(status="active", code=PROFIT_TARGET):
                                  "quantity": 1,
                                  "observed_at": "2026-08-11T15:00:00-04:00"}},
         "plans/nvda": {"plan": "close at 100%", "status": status,
+                       "active_at": "2026-08-12T23:00:00+00:00",
                        "program": _program(code)},
     }
 
@@ -496,6 +497,7 @@ def test_plans_can_arm_entries_on_unfilled_trades():
                        "thesis": "gamma", "invalidation": "fade",
                        "state": "idea"},
         "plans/amd": {"plan": "enter if ask <= 4", "status": "active",
+                      "active_at": "2026-08-13T13:00:00+00:00",
                       "archived_at": "x", "program": _program(ENTRY_PLAN)},
     }
     pilot = _pilot(context, {"live_quote":
@@ -559,3 +561,12 @@ def test_overlay_output_shape_is_validated():
         "def compute(inputs):\n return {'levels': [{'price': 'high'}]}",
         {})
     assert result is None and "numeric" in error
+
+
+def test_agent_written_active_without_member_stamp_never_runs():
+    context = _live_context()
+    del context["plans/nvda"]["active_at"]  # no member press, no run
+    pilot = _pilot(context, {"live_quote":
+                             {"quote": {"bid": 9.99, "ask": 10.0}}})
+    assert pilot.manage_plans(context, NOW) == 0
+    assert "widgets/fill-nvda-exit" not in context

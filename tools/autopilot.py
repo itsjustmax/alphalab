@@ -642,6 +642,12 @@ class Pilot:
                 continue
             if plan.get("status") != "active":
                 continue
+            if not plan.get("active_at"):
+                # activation is the MEMBER's act — the UI stamps
+                # active_at when they press the button after inspecting.
+                # An agent-written "active" without the stamp does not
+                # run; the audit of conventions is a tripwire, not trust.
+                continue
             trade_id = key[len("plans/"):]
             if not plan.get("archived_at"):
                 # The member just activated this plan — the endorsement
