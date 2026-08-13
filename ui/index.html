@@ -2253,9 +2253,13 @@ function renderChartModal() {
       `${line.name}: ${String(line.text).slice(0, 150)}`));
   const thoughtsMount = el("div", {id: "thoughts-mount"});
   thoughts.append(thoughtsMount);
+  // THE TAPE RULE: every candidate contract this trade might enter
+  // gets its tape automatically — derived from the trade's contracts,
+  // never authored, never forgotten. All candidates, no cap short of
+  // the trade contract's own five.
   const candidates = [...new Set((trade.contracts || [])
     .map(contractLabel)
-    .filter(x => x && contractArgs(x).sec_type === "OPT"))].slice(0, 3);
+    .filter(x => x && contractArgs(x).sec_type === "OPT"))].slice(0, 5);
   if (!candidates.length && meta.label) candidates.push(meta.label);
   body.replaceChildren(
     cockpitStrip(meta),

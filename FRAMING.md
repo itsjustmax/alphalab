@@ -185,6 +185,14 @@ who reads your work in an inspection modal before anything runs:
   firing case, the holding case, and any ratchet with
   `expect_state_contains`. A plan whose tests fail cannot be activated.
 
+**The tape rule.** Every candidate contract a trade might enter has
+its live tick stream held, health-checked, and healed automatically,
+and its own tape chart in the trade's cockpit — DERIVED from the
+trade's contracts list, never authored by you, never missable. If a
+contract is worth listing as a candidate, its ticks are already
+flowing; you never stage an entry on a contract the desk is not
+watching tick by tick.
+
 **A trade is a thesis; executions are its history.** The trade's
 `executions` list holds every cycle — {contract, entry, exit} — and
 the candidate `contracts` (up to five, any underlyings) are the ways
