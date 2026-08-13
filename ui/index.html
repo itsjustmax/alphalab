@@ -242,6 +242,28 @@
                    font-weight: 650; white-space: nowrap; }
   /* Trade details modal */
   #trade-modal[hidden] { display: none; }
+  #chart-modal { position: fixed; inset: 0; z-index: 55;
+    background: rgba(5, 8, 14, .72); backdrop-filter: blur(3px);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 3vh 1rem; overflow-y: auto; }
+  #chart-modal[hidden] { display: none; }
+  #chart-modal-card { width: min(1040px, 97vw); background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: 18px;
+    padding: 1.2rem 1.4rem; box-shadow: 0 24px 80px rgba(0,0,0,.5); }
+  .pane { margin-top: 1rem; }
+  .pane-head { display: flex; align-items: center; gap: .6rem;
+    flex-wrap: wrap; }
+  .pane-head h4 { margin: 0; font-size: .85rem; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); flex: 1; }
+  .tf-chip, .plugin-chip { background: var(--surface-2); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 7px; font: inherit;
+    font-size: .74rem; padding: .25rem .6rem; cursor: pointer; }
+  .tf-chip.on, .plugin-chip.on { color: var(--text);
+    border-color: var(--accent); }
+  .pane-chart { margin-top: .5rem; min-height: 120px; }
+  .pane-chart svg { display: block; width: 100%; height: auto; }
+  .spark-cell { cursor: pointer; }
+  .spark-cell:hover { opacity: .85; }
   #trade-modal { position: fixed; inset: 0; z-index: 50;
     background: rgba(5, 8, 14, .66); backdrop-filter: blur(3px);
     display: flex; align-items: flex-start; justify-content: center;
@@ -298,6 +320,16 @@
   </span>
 </header>
 <div id="liveness"></div>
+
+<div id="chart-modal" hidden>
+  <div id="chart-modal-card">
+    <div id="trade-modal-head">
+      <h3 id="chart-modal-title">Chart</h3>
+      <button id="chart-modal-close" title="close">✕</button>
+    </div>
+    <div id="chart-modal-body"></div>
+  </div>
+</div>
 
 <div id="trade-modal" hidden>
   <div id="trade-modal-card">
@@ -1205,6 +1237,238 @@ async function pnlLoop() {
   }
   if (pnlWatch.size) pnlTimer = setTimeout(pnlLoop, 15000);
 }
+// ---- The charting primitive ----------------------------------------
+// One candle renderer, a plugin pipeline. A plugin is a plain object:
+//   {id, label, appliesTo: "contract"|"underlying"|"both",
+//    levels?: ctx => [prices]     // stretch the y-domain before scales
+//    draw:    ctx => void}        // paint after the candles
+// ctx: {g, x, y, bars, w, h, meta, d3} — meta carries {tradeKey, entry,
+// exitLimit, symbol, label, plan}. Adding an overlay — a new technical,
+// a management visual, anything — is registering one object here.
+function smaSeries(bars, window_) {
+  const out = [];
+  let sum = 0;
+  bars.forEach((bar, index) => {
+    sum += bar.close;
+    if (index >= window_) sum -= bars[index - window_].close;
+    out.push(index >= window_ - 1 ? sum / window_ : null);
+  });
+  return out;
+}
+function emaSeries(bars, window_) {
+  const k = 2 / (window_ + 1);
+  let prev = null;
+  return bars.map(bar => prev = prev === null ? bar.close
+    : bar.close * k + prev * (1 - k));
+}
+function linePlugin(values, ctx, color) {
+  const points = values.map((value, index) => value === null ? null
+    : `${ctx.x(index).toFixed(1)},${ctx.y(value).toFixed(1)}`)
+    .filter(Boolean).join(" ");
+  ctx.g.append("polyline").attr("points", points)
+    .attr("fill", "none").attr("stroke", color).attr("stroke-width", 1.2)
+    .attr("opacity", .85);
+}
+function levelLine(ctx, price, color, text) {
+  if (!isFinite(price)) return;
+  const yy = ctx.y(price);
+  if (yy < 0 || yy > ctx.h) return;
+  ctx.g.append("line").attr("x1", 0).attr("x2", ctx.w)
+    .attr("y1", yy).attr("y2", yy).attr("stroke", color)
+    .attr("stroke-dasharray", "4 4").attr("stroke-width", 1);
+  ctx.g.append("text").attr("x", ctx.w - 4).attr("y", yy - 4)
+    .attr("text-anchor", "end").attr("fill", color)
+    .attr("font-size", "10px").text(text);
+}
+const CHART_PLUGINS = {
+  sma20: {id: "sma20", label: "SMA 20", appliesTo: "both",
+    draw: ctx => linePlugin(smaSeries(ctx.bars, 20), ctx, "#8b7cf6")},
+  ema9: {id: "ema9", label: "EMA 9", appliesTo: "both",
+    draw: ctx => linePlugin(emaSeries(ctx.bars, 9), ctx, "#f5a524")},
+  plan: {id: "plan", label: "plan", appliesTo: "contract",
+    levels: ctx => [ctx.meta.entry, ctx.meta.exitLimit].filter(isFinite),
+    draw: ctx => {
+      levelLine(ctx, ctx.meta.entry, "var(--muted)",
+        `entry ${ctx.meta.entry}`);
+      levelLine(ctx, ctx.meta.exitLimit, "var(--up)",
+        `exit ${ctx.meta.exitLimit}`);
+    }},
+  zones: {id: "zones", label: "zones", appliesTo: "underlying",
+    draw: ctx => {
+      toolData("symbol_zones", {symbol: ctx.meta.symbol,
+        timeframe: "daily"}, 60).then(receipt => {
+        for (const zone of normalizeZones(receipt?.data?.rows)) {
+          const top = Math.max(0, Math.min(ctx.h, ctx.y(zone.upper)));
+          const bottom = Math.max(0, Math.min(ctx.h, ctx.y(zone.lower)));
+          if (bottom - top < 1) continue;
+          ctx.g.insert("rect", ":first-child")
+            .attr("x", 0).attr("width", ctx.w)
+            .attr("y", top).attr("height", bottom - top)
+            .attr("fill", zone.zone_type === "supply"
+              ? "var(--down)" : "var(--up)")
+            .attr("opacity", .10);
+        }
+      });
+    }},
+};
+function advancedCandles(holder, bars, {plugins = [], meta = {}} = {}) {
+  holder.replaceChildren();
+  if (!bars || bars.length < 2) {
+    holder.append(el("p", {class: "muted"}, "no bars from the lane"));
+    return;
+  }
+  const w = 960, h = 300, pad = {l: 8, r: 52, t: 8, b: 22};
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const svg = d3.create("svg").attr("viewBox", `0 0 ${w} ${h}`);
+  const g = svg.append("g")
+    .attr("transform", `translate(${pad.l},${pad.t})`);
+  let lo = Math.min(...bars.map(b => b.low));
+  let hi = Math.max(...bars.map(b => b.high));
+  for (const plugin of plugins)
+    for (const price of plugin.levels
+         ? plugin.levels({bars, meta}) : []) {
+      lo = Math.min(lo, price); hi = Math.max(hi, price);
+    }
+  const padY = (hi - lo) * 0.05 || 1;
+  const y = d3.scaleLinear().domain([lo - padY, hi + padY])
+    .range([ih, 0]);
+  const x = index => (index + 0.5) / bars.length * iw;
+  const bw = Math.max(1.5, iw / bars.length * 0.6);
+  const up = getComputedStyle(document.documentElement)
+    .getPropertyValue("--up").trim() || "#34d399";
+  const down = getComputedStyle(document.documentElement)
+    .getPropertyValue("--down").trim() || "#f4645f";
+  for (const [index, bar] of bars.entries()) {
+    const color = bar.close >= bar.open ? up : down;
+    g.append("line").attr("x1", x(index)).attr("x2", x(index))
+      .attr("y1", y(bar.high)).attr("y2", y(bar.low))
+      .attr("stroke", color).attr("stroke-width", 1);
+    g.append("rect").attr("x", x(index) - bw / 2)
+      .attr("y", y(Math.max(bar.open, bar.close)))
+      .attr("width", bw)
+      .attr("height", Math.max(1,
+        Math.abs(y(bar.open) - y(bar.close))))
+      .attr("fill", color);
+  }
+  const axis = g.append("g").attr("transform", `translate(${iw},0)`)
+    .call(d3.axisRight(y).ticks(6).tickSize(0));
+  axis.selectAll("text").attr("fill", "var(--muted)")
+    .attr("font-size", "10px");
+  axis.select(".domain").remove();
+  const ticks = [0, Math.floor(bars.length / 2), bars.length - 1];
+  for (const index of ticks)
+    g.append("text").attr("x", x(index)).attr("y", ih + 14)
+      .attr("text-anchor", index === 0 ? "start"
+        : index === bars.length - 1 ? "end" : "middle")
+      .attr("fill", "var(--muted)").attr("font-size", "9px")
+      .text(String(bars[index].bar_time).slice(5, 16).replace("T", " "));
+  const ctx = {g, x, y, bars, w: iw, h: ih, meta, d3};
+  for (const plugin of plugins) plugin.draw(ctx);
+  holder.append(svg.node());
+}
+
+// ---- The chart modal: contract + underlying, plugins per pane -------
+const chartModalState = {};
+const CONTRACT_TFS = {"1m": ["1 min", "1 D"], "5m": ["5 mins", "2 D"],
+                      "15m": ["15 mins", "5 D"]};
+const UNDERLYING_TFS = {"hourly": ["1 hour", "10 D"],
+                        "daily": ["1 day", "6 M"]};
+const INDEXES = new Set(["SPX", "XSP", "NDX", "VIX", "DJI", "RUT"]);
+function chartPane(kind, meta, state) {
+  const pane = el("div", {class: "pane"});
+  const head = el("div", {class: "pane-head"});
+  head.append(el("h4", {}, kind === "contract"
+    ? `${meta.label} — premium` : `${meta.symbol} — underlying`));
+  const tfs = kind === "contract" ? CONTRACT_TFS : UNDERLYING_TFS;
+  for (const tf of Object.keys(tfs)) {
+    const chip = el("button", {type: "button",
+      class: "tf-chip" + (state.tf === tf ? " on" : "")}, tf);
+    chip.addEventListener("click", () => {
+      state.tf = tf;
+      renderChartModal();
+    });
+    head.append(chip);
+  }
+  head.append(el("span", {class: "muted", style: "font-size:.72rem"}, "·"));
+  for (const plugin of Object.values(CHART_PLUGINS)) {
+    if (plugin.appliesTo !== "both" && plugin.appliesTo !== kind) continue;
+    const chip = el("button", {type: "button",
+      class: "plugin-chip" + (state.plugins.has(plugin.id) ? " on" : "")},
+      plugin.label);
+    chip.addEventListener("click", () => {
+      state.plugins.has(plugin.id)
+        ? state.plugins.delete(plugin.id)
+        : state.plugins.add(plugin.id);
+      renderChartModal();
+    });
+    head.append(chip);
+  }
+  pane.append(head);
+  const chart = el("div", {class: "pane-chart"}, "…");
+  pane.append(chart);
+  const [barSize, duration] = tfs[state.tf];
+  const args = kind === "contract"
+    ? {...contractArgs(meta.label), duration, bar_size: barSize,
+       return_limit: 200}
+    : {symbol: meta.symbol,
+       sec_type: INDEXES.has(meta.symbol) ? "IND" : "STK",
+       duration, bar_size: barSize, return_limit: 200};
+  toolData("contract_bars", args, 5).then(receipt => {
+    const bars = (receipt?.ok
+      && (receipt.data?.rows || receipt.data?.bars)) || [];
+    if (!bars.length) {
+      chart.replaceChildren(el("p", {class: "muted"},
+        "bar lane quiet: " + (receipt?.gaps || ["no answer"]).join("; ")));
+      return;
+    }
+    advancedCandles(chart, bars, {
+      plugins: [...state.plugins].map(id => CHART_PLUGINS[id])
+        .filter(Boolean),
+      meta});
+  });
+  return pane;
+}
+function renderChartModal() {
+  const state = chartModalState;
+  if (!state.tradeKey) return;
+  const trade = lastView?.context?.[state.tradeKey] || {};
+  const fill = trade.fill || {};
+  const label = [...(trade.contracts || []), fill.contract]
+    .map(contractLabel)
+    .find(x => x && contractArgs(x).sec_type === "OPT") || "";
+  const exitCard = lastView?.context?.[
+    `widgets/fill-${state.tradeKey.slice(7)}-exit`];
+  const meta = {
+    tradeKey: state.tradeKey,
+    label,
+    symbol: contractArgs(label).symbol || "",
+    entry: Number(fill.price),
+    exitLimit: Number(((exitCard?.refresh || {}).args || {}).price),
+    plan: lastView?.context?.[`plans/${state.tradeKey.slice(7)}`],
+  };
+  document.getElementById("chart-modal-title").textContent =
+    `${label} — advanced chart`;
+  const body = document.getElementById("chart-modal-body");
+  body.replaceChildren(
+    chartPane("contract", meta, state.contract),
+    chartPane("underlying", meta, state.underlying));
+  document.getElementById("chart-modal").hidden = false;
+}
+function openChartModal(tradeKey) {
+  chartModalState.tradeKey = tradeKey;
+  chartModalState.contract = chartModalState.contract
+    || {tf: "5m", plugins: new Set(["plan"])};
+  chartModalState.underlying = chartModalState.underlying
+    || {tf: "daily", plugins: new Set(["zones"])};
+  renderChartModal();
+}
+document.getElementById("chart-modal-close").addEventListener("click",
+  () => document.getElementById("chart-modal").hidden = true);
+document.getElementById("chart-modal").addEventListener("click", event => {
+  if (event.target.id === "chart-modal")
+    document.getElementById("chart-modal").hidden = true;
+});
+
 // The premium's path since entry, as a tiny two-tone area: green
 // above the entry price, red below. Seeded from historical bars at
 // load; while the desk runs, the live tick stream extends it — the
@@ -1263,7 +1527,9 @@ function feedSpark(tradeKey, mark) {
   drawSpark(state);
 }
 function premiumSpark(tradeKey, trade, label) {
-  const cell = el("div", {class: "spark-cell"});
+  const cell = el("div", {class: "spark-cell",
+    title: "open the advanced chart"});
+  cell.addEventListener("click", () => openChartModal(tradeKey));
   const fill = trade.fill;
   const args = contractArgs(label);
   if (!fill || args.sec_type !== "OPT") { cell.textContent = "—"; return cell; }

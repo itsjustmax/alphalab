@@ -88,6 +88,17 @@ positions table marks every open position live from its own contract's
 stream: PnL from entry at the bid — the liquidation side — with the
 tick's clock in the tooltip.
 
+The advanced chart (click any position's sparkline) is a charting
+PRIMITIVE with a plugin pipeline: two panes — the contract's premium
+(1m/5m/15m broker bars) and its underlying (hourly/daily) — where each
+overlay is one registered object in the client's CHART_PLUGINS:
+{id, label, appliesTo: "contract"|"underlying"|"both", levels?: ctx =>
+[prices to include in the y-domain], draw: ctx => paint}. ctx carries
+the d3 group, scales, bars, and trade meta (entry, exit limit, plan).
+Shipped plugins: SMA 20, EMA 9, plan (entry/exit levels), zones
+(supply/demand bands). New analytics = one new object; ask the member
+before shipping a new plugin into the harness bytes.
+
 A member can run several desks at once — each environment is its own
 board with its own trades, plans, and autopilot state. The header's
 "desks" menu lives INSIDE AlphaLab: it lists this harness's desks by
