@@ -565,3 +565,31 @@ def test_stream_health_names_the_stale(tmp_path):
     assert report["stale"] == ["AMD", "SPX"]  # silent + 2h-old tick
     assert writes["desk/streams"]["quotes"]["NVDA"]["age_seconds"] == 10
     assert writes["desk/streams"]["quotes"]["AMD"] is None
+
+
+def test_stale_streams_are_rewarmed_throttled(tmp_path):
+    import datetime
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    warms = []
+    now = datetime.datetime(2026, 8, 13, 14, 0,
+                            tzinfo=datetime.timezone.utc)
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/tools/live_quotes"):
+            if (body.get("args") or {}).get("warm"):
+                warms.append(body["args"]["symbols"])
+                return {"result": {"ok": True, "data": {"quotes": {}}}}
+            return {"result": {"ok": True, "data": {"quotes": {
+                "NVDA": {"last": 224.3,
+                         "observed_at": "2026-08-13T02:00:00+00:00"}}}}}
+        return {}
+
+    pilot._api = fake_api
+    pilot.stream_health({"watchlist": ["NVDA"]}, now)
+    assert warms == [["NVDA"]], "a stale stream earns one warm attempt"
+    pilot.stream_health({"watchlist": ["NVDA"]}, now)
+    assert warms == [["NVDA"]], "throttled: no second attempt inside 5m"
+    later = now + datetime.timedelta(minutes=6)
+    pilot.stream_health({"watchlist": ["NVDA"]}, later)
+    assert len(warms) == 2, "a new attempt after the throttle window"

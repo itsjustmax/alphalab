@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.11.0",
+  "version": "2.12.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -105,6 +105,24 @@
         "python3",
         "tools/run.py",
         "plan_check"
+      ]
+    },
+    {
+      "name": "contract_bars",
+      "description": "Historical bars for one exact contract (stock or option) straight from the broker — the lane behind the positions sparkline. data: {rows: [{bar_time, open, high, low, close}]}.",
+      "args": {
+        "symbol": "ticker",
+        "sec_type": "OPT or STK",
+        "expiration": "YYYYMMDD (options)",
+        "strike": "strike (options)",
+        "right": "C or P (options)",
+        "duration": "IBKR window, e.g. 5 D",
+        "bar_size": "e.g. 1 hour, 1 day"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "contract_bars"
       ]
     },
     {

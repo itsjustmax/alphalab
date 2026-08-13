@@ -772,6 +772,27 @@ class Pilot:
                 stale.append(symbol)
         report = {"quotes": health, "stale": sorted(stale),
                   "checked_at": now.isoformat(timespec="seconds")}
+        # Self-healing: a stale stream is re-warmed, not just reported —
+        # when the broker connection returns, the desk comes back on its
+        # own. Throttled per symbol so a dead lane isn't hammered.
+        warm = []
+        attempts = self.state.setdefault("warm_attempts", {})
+        for symbol in report["stale"]:
+            last = gates.parse_clock(attempts.get(symbol))
+            if last is None or (now - last).total_seconds() >= 300:
+                warm.append(symbol)
+                attempts[symbol] = now.isoformat(timespec="seconds")
+        if warm:
+            self._save()
+            try:
+                self._api(
+                    "POST",
+                    f"/environments/{self.environment}/tools/live_quotes",
+                    {"args": {"symbols": warm, "warm": True}})
+                print(f"[{utc_now():%H:%M:%S}] re-warming stale "
+                      f"stream(s): {', '.join(warm)}", flush=True)
+            except Exception:
+                pass
         previous = (context or {}).get("desk/streams") or {}
         last_write = gates.parse_clock(previous.get("checked_at"))
         if sorted(previous.get("stale") or []) != report["stale"] \

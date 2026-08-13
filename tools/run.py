@@ -39,6 +39,7 @@ ALIASES = {
     "implied_move": "market.implied_move",
     "symbol_research": "market.symbol.research",
     "symbol_zones": "market.symbol.zones",
+    "contract_bars": "ibkr.historical_bars",
     "system_health": "system.health",
 }
 

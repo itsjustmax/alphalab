@@ -213,6 +213,8 @@
   .mgmt-words { font-style: italic; font-size: .8rem;
     color: var(--muted); margin: .3rem 0 .35rem; }
   td.mgmt { min-width: 220px; }
+  .spark-cell { min-width: 118px; }
+  .spark-cell svg { display: block; }
   .choices { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0; }
   .choices button { font-size: .85rem; }
   .choices button.selected { border-color: var(--accent); color: var(--accent); }
@@ -1003,6 +1005,15 @@ async function tickLoop() {
           if (applyTick(chip, quotes[symbol])) {
             tickLoop.live = tickLoop.live || new Set();
             tickLoop.live.add(symbol);
+            // A stale tick means the persisted stream stopped printing;
+            // re-warm it (throttled) so a recovered broker connection
+            // brings the chips back without anyone asking.
+            const clock = Date.parse(quotes[symbol]?.observed_at);
+            if (!isNaN(clock) && Date.now() - clock > 180_000
+                && (quietUntil[symbol] || 0) < Date.now()) {
+              quietUntil[symbol] = Date.now() + 60_000;
+              probeQuiet(symbol, chip);
+            }
           } else {
             quietUntil[symbol] = Date.now() + 60_000;
             fillTick(chip, symbol);
@@ -1029,7 +1040,8 @@ function renderPositions(view) {
   const table = el("table");
   const head = el("tr");
   for (const column of ["contract", "state", "entry", "pnl from entry",
-                        "exit / result", "underlying (EOD)", "management"])
+                        "since entry", "exit / result", "underlying (EOD)",
+                        "management"])
     head.append(el("td", {class: "key"}, column));
   table.append(head);
   for (const [key, c] of rows) {
@@ -1073,6 +1085,7 @@ function renderPositions(view) {
       pnl.className = "val " + (dollars >= 0 ? "up" : "down");
     }
     line.append(pnl);
+    line.append(premiumSparkCell(key, c, held));
     let result = c.state === "open-simulated" ? "open" : "—";
     if (c.exit && f) {
       const diff = c.exit.price - f.price;
@@ -1148,6 +1161,64 @@ async function pnlLoop() {
   }
   if (pnlWatch.size) pnlTimer = setTimeout(pnlLoop, 15000);
 }
+// The premium's path since entry, as a tiny two-tone area: green
+// above the entry price, red below — the trade's whole life at a
+// glance. Hourly broker bars, cached 15 minutes.
+function premiumSparkCell(tradeKey, trade, label) {
+  const cell = el("td", {class: "spark-cell"});
+  const fill = trade.fill;
+  const args = contractArgs(label);
+  if (!fill || args.sec_type !== "OPT") { cell.textContent = "—"; return cell; }
+  const entryClock = Date.parse(fill.observed_at);
+  const days = Math.max(1, Math.min(30, Math.ceil(
+    (Date.now() - (isNaN(entryClock) ? Date.now() : entryClock)) / 86_400_000)));
+  toolData("contract_bars", {...args, duration: `${days + 1} D`,
+    bar_size: "1 hour"}, 15).then(receipt => {
+    const bars = (receipt?.ok && (receipt.data?.rows || receipt.data?.bars)) || [];
+    const since = bars.filter(bar =>
+      isNaN(entryClock) || Date.parse(bar.bar_time) >= entryClock - 3_600_000);
+    if (since.length < 2) {
+      cell.textContent = "…";
+      cell.title = receipt?.ok ? "not enough bars since entry yet"
+        : "bar lane quiet: " + (receipt?.gaps || []).join("; ");
+      return;
+    }
+    const closes = since.map(bar => Number(bar.close));
+    const entry = Number(fill.price);
+    const w = 110, h = 34;
+    const lo = Math.min(...closes, entry), hi = Math.max(...closes, entry);
+    const y = value => hi === lo ? h / 2
+      : h - ((value - lo) / (hi - lo)) * (h - 4) - 2;
+    const x = index => (index / (closes.length - 1)) * w;
+    const points = closes.map((value, index) =>
+      `${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
+    const baseline = y(entry).toFixed(1);
+    const area = side =>
+      `M0,${baseline} L` + points.replace(/ /g, " L") + ` L${w},${baseline} Z`;
+    const last = closes[closes.length - 1];
+    const svg =
+      `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+      `<defs><clipPath id="up-${tradeKey.slice(7)}"><rect x="0" y="0" ` +
+      `width="${w}" height="${baseline}"/></clipPath>` +
+      `<clipPath id="dn-${tradeKey.slice(7)}"><rect x="0" y="${baseline}" ` +
+      `width="${w}" height="${h}"/></clipPath></defs>` +
+      `<path d="${area()}" fill="var(--up)" opacity=".35" ` +
+      `clip-path="url(#up-${tradeKey.slice(7)})"/>` +
+      `<path d="${area()}" fill="var(--down)" opacity=".35" ` +
+      `clip-path="url(#dn-${tradeKey.slice(7)})"/>` +
+      `<line x1="0" y1="${baseline}" x2="${w}" y2="${baseline}" ` +
+      `stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1"/>` +
+      `<polyline points="${points}" fill="none" ` +
+      `stroke="${last >= entry ? "var(--up)" : "var(--down)"}" ` +
+      `stroke-width="1.5"/></svg>`;
+    cell.innerHTML = svg;
+    const latestBar = since[since.length - 1];
+    cell.title = `premium since entry $${entry} — latest bar close ` +
+      `$${last} (${latestBar.bar_time}); hourly broker bars`;
+  });
+  return cell;
+}
+
 function contractArgs(label) {
   const text = contractLabel(label);
   const tokens = text.trim().split(/\s+/);
