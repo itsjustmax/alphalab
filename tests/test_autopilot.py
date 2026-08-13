@@ -594,3 +594,27 @@ def test_stale_streams_are_rewarmed_throttled(tmp_path):
     later = now + datetime.timedelta(minutes=6)
     pilot.stream_health({"watchlist": ["NVDA"]}, later)
     assert len(warms) == 4, "a new attempt after the throttle window"
+
+
+def test_retired_trades_are_not_audited(tmp_path):
+    import datetime
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    writes = {}
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/context") and body is not None:
+            writes[body["key"]] = body["value"]
+        return {}
+
+    pilot._api = fake_api
+    pilot._check_trade = lambda key, trade: (
+        [] if isinstance(trade, dict) else ["a trade is one JSON object"])
+    now = datetime.datetime(2026, 8, 13, 13, 0,
+                            tzinfo=datetime.timezone.utc)
+    context = {"trades/live": {"contracts": ["NVDA 20260821 235C"],
+                               "state": "idea"},
+               "trades/retired": None}
+    pilot.audit(context, now)
+    assert writes["desk/audit"]["clean"] is True
+    assert writes["desk/audit"]["cases_checked"] == 1

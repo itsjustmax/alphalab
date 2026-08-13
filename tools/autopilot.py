@@ -408,7 +408,9 @@ class Pilot:
         """Audit the cases after they change; the verdict lands at desk/audit
         where the next turn (and the desk header) can see it."""
 
-        trades = {k: v for k, v in context.items() if k.startswith("trades/")}
+        # a null value is a retired entry, not a broken trade
+        trades = {k: v for k, v in context.items()
+                  if k.startswith("trades/") and v is not None}
         fingerprint = json.dumps(trades, sort_keys=True, default=str)
         if fingerprint == self.state.get("audit_fingerprint"):
             return None

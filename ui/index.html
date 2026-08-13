@@ -1172,14 +1172,19 @@ function premiumSparkCell(tradeKey, trade, label) {
   const entryClock = Date.parse(fill.observed_at);
   const days = Math.max(1, Math.min(30, Math.ceil(
     (Date.now() - (isNaN(entryClock) ? Date.now() : entryClock)) / 86_400_000)));
+  const barSize = days <= 3 ? "30 mins" : "1 hour";
   toolData("contract_bars", {...args, duration: `${days + 1} D`,
-    bar_size: "1 hour"}, 15).then(receipt => {
+    bar_size: barSize}, 15).then(receipt => {
     const bars = (receipt?.ok && (receipt.data?.rows || receipt.data?.bars)) || [];
-    const since = bars.filter(bar =>
+    let since = bars.filter(bar =>
       isNaN(entryClock) || Date.parse(bar.bar_time) >= entryClock - 3_600_000);
+    // A young position has few bars since entry — show the recent
+    // window instead so the picture exists from day one; the entry
+    // baseline still tells the green/red story.
+    if (since.length < 2) since = bars.slice(-12);
     if (since.length < 2) {
       cell.textContent = "…";
-      cell.title = receipt?.ok ? "not enough bars since entry yet"
+      cell.title = receipt?.ok ? "no bars from the lane yet"
         : "bar lane quiet: " + (receipt?.gaps || []).join("; ");
       return;
     }
