@@ -34,6 +34,27 @@ You cannot run tools mid-turn: wire a `capabilities` card (refresh
 program) so the desk learns which lanes are live, and prefer inline
 data until a full-engine receipt proves its lane.
 
+## Cells are atomic
+
+A cell renders only from itself — never from another cell's data.
+This is what makes retirement safe: deleting a cell ends exactly its
+own data management, and nothing else can break, because nothing else
+was leaning on it.
+
+- Need live data? Declare your OWN refresh program. Asking twice is
+  cheap by design: streams are one shared subscription per contract
+  however many cells read them, derivations are persisted and served
+  from their store, and reads are cached — deduplication is the data
+  lanes' job, not yours.
+- Synthesizing from other cells? COPY the values you need, with their
+  clocks — the synthesis then stands on its own even if its sources
+  retire. Cite the source keys for provenance (the audit guards those
+  references on live trades), but provenance is a pointer, never a
+  render-time read.
+- Never author a cell whose display depends on a sibling entry being
+  present. If you catch yourself wanting one, you want either a copy
+  (snapshot with clock) or your own program (live).
+
 ## Forms — the affordable lane
 
 You do not have to assemble cells; write minimal fields and the desk
