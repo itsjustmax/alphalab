@@ -678,3 +678,16 @@ def test_idea_contracts_hold_streams_and_get_health_checked():
     keys = [(h.get("symbol"), h.get("strike")) for h in holders]
     assert ("AMD", 530.0) in keys, "an idea holds its contract's stream"
     assert not any(s == "TSLA" for s, _ in keys), "closed trades release"
+
+
+def test_cockpit_candidate_contracts_hold_streams():
+    context = {"cockpit/nvda/candidate-240c": {
+        "kind": "metric",
+        "refresh": {"tool": "live_quote",
+                    "args": {"symbol": "NVDA", "sec_type": "OPT",
+                             "expiration": "20260821", "strike": 240,
+                             "right": "C"},
+                    "minutes": 2}}}
+    holders = autopilot.stream_holders(context)
+    assert any(h.get("strike") == 240 for h in holders), \
+        "a watched candidate holds its stream"

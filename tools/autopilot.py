@@ -143,6 +143,17 @@ def stream_holders(context):
                     and isinstance(declaration.get("args"), dict) \
                     and declaration["args"].get("symbol"):
                 armed.append(declaration["args"])
+    # ANY entry whose refresh program reads a live lane holds that
+    # stream — cockpit candidate cells, quotes/ chips, order cards.
+    for key, value in (context or {}).items():
+        if not isinstance(value, dict):
+            continue
+        refresh = value.get("refresh") or {}
+        args = refresh.get("args") if isinstance(refresh, dict) else None
+        if isinstance(args, dict) and args.get("symbol") \
+                and str(refresh.get("tool")) in (
+                    "live_quote", "fill_watch", "market_stream"):
+            armed.append(args)
     # EVERY live trade holds its contracts' streams — an idea with no
     # eyes on its contract is how an entry gets missed. Closed trades
     # release theirs.
@@ -809,6 +820,28 @@ class Pilot:
         # PnL mark reads their stream, so a dead one lies to the member.
         contracts = []
         seen_labels = set()
+        for key, value in (context or {}).items():
+            if not isinstance(value, dict):
+                continue
+            refresh = value.get("refresh") or {}
+            args = refresh.get("args") if isinstance(refresh, dict) else None
+            if not (isinstance(args, dict)
+                    and str(refresh.get("tool")) == "live_quote"
+                    and args.get("expiration") and args.get("strike")):
+                continue
+            label = str(args.get("contract")
+                        or f"{str(args['symbol']).upper()} "
+                           f"{args['expiration']} "
+                           f"{float(args['strike']):g}"
+                           f"{str(args.get('right') or 'C').upper()}")
+            parsed = {"symbol": str(args["symbol"]).upper(),
+                      "sec_type": "OPT",
+                      "expiration": str(args["expiration"]),
+                      "strike": float(args["strike"]),
+                      "right": str(args.get("right") or "C").upper()}
+            if label not in seen_labels:
+                seen_labels.add(label)
+                contracts.append((label, parsed))
         for key, trade in (context or {}).items():
             if not key.startswith("trades/") or not isinstance(trade, dict):
                 continue

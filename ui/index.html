@@ -218,6 +218,8 @@
   .s-plan-draft { border-color: var(--accent); color: var(--accent); }
   .s-plan-requested { border-color: var(--warn); color: var(--warn); }
   .s-plan-paused, .s-plan-unmanaged { color: var(--muted); }
+  .s-plan-create { border-color: var(--warn); color: var(--warn);
+    font-weight: 700; }
   .s-plan-completed { border-color: var(--border-strong);
     color: var(--muted); }
   .plan-chip { cursor: pointer; background: none; font: inherit;
@@ -1315,6 +1317,28 @@ function overlayEntries(meta) {
     .map(([key, value]) => ({key, ...value}));
 }
 const CHART_PLUGINS = {
+  ticks: {id: "ticks", label: "ticks", appliesTo: "contract",
+    draw: ctx => {
+      toolData("live_quote", contractArgs(ctx.meta.paneLabel
+        || ctx.meta.label), 0.2).then(receipt => {
+        const quote = receipt?.ok && receipt.data?.quote;
+        const last = quote && Number(quote.last ?? quote.bid);
+        if (!isFinite(last)) return;
+        const yy = ctx.y(last);
+        if (yy < -10 || yy > ctx.h + 10) return;
+        ctx.g.append("line").attr("x1", 0).attr("x2", ctx.w)
+          .attr("y1", yy).attr("y2", yy)
+          .attr("stroke", "var(--accent)").attr("stroke-width", 1)
+          .attr("stroke-dasharray", "2 3");
+        ctx.g.append("circle").attr("cx", ctx.w - 3).attr("cy", yy)
+          .attr("r", 3).attr("fill", "var(--accent)");
+        ctx.g.append("text").attr("x", ctx.w - 8).attr("y", yy - 5)
+          .attr("text-anchor", "end").attr("fill", "var(--accent)")
+          .attr("font-size", "10px")
+          .text(`tick ${last} · ${String(quote.observed_at)
+            .slice(11, 19)}`);
+      });
+    }},
   sma20: {id: "sma20", label: "SMA 20", appliesTo: "both",
     draw: ctx => linePlugin(smaSeries(ctx.bars, 20), ctx, "#8b7cf6")},
   ema9: {id: "ema9", label: "EMA 9", appliesTo: "both",
@@ -1425,6 +1449,7 @@ function advancedCandles(holder, bars, {plugins = [], meta = {}} = {}) {
 
 // ---- The chart modal: contract + underlying, plugins per pane -------
 const chartModalState = {};
+const paneMemory = {};
 const CONTRACT_TFS = {"1m": ["1 min", "1 D"], "5m": ["5 mins", "2 D"],
                       "15m": ["15 mins", "5 D"]};
 const UNDERLYING_TFS = {"hourly": ["1 hour", "10 D"],
@@ -1460,9 +1485,16 @@ function chartPane(kind, meta, state) {
     head.append(chip);
   }
   pane.append(head);
-  const chart = el("div", {class: "pane-chart"}, "…");
+  const chart = el("div", {class: "pane-chart"});
   pane.append(chart);
   const [barSize, duration] = tfs[state.tf];
+  const memoryKey = `${meta.tradeKey}|${kind}|${state.tf}`;
+  const plugins = () => [...state.plugins].map(id => CHART_PLUGINS[id])
+    .filter(Boolean);
+  if (paneMemory[memoryKey]) {
+    advancedCandles(chart, paneMemory[memoryKey],
+      {plugins: plugins(), meta: {...meta, pane: kind}});
+  } else chart.textContent = "…";
   const args = kind === "contract"
     ? {...contractArgs(meta.label), duration, bar_size: barSize,
        return_limit: 200}
@@ -1473,14 +1505,14 @@ function chartPane(kind, meta, state) {
     const bars = (receipt?.ok
       && (receipt.data?.rows || receipt.data?.bars)) || [];
     if (!bars.length) {
-      chart.replaceChildren(el("p", {class: "muted"},
-        "bar lane quiet: " + (receipt?.gaps || ["no answer"]).join("; ")));
+      if (!paneMemory[memoryKey])  // keep the last picture through gaps
+        chart.replaceChildren(el("p", {class: "muted"},
+          "bar lane quiet: " + (receipt?.gaps || ["no answer"]).join("; ")));
       return;
     }
-    advancedCandles(chart, bars, {
-      plugins: [...state.plugins].map(id => CHART_PLUGINS[id])
-        .filter(Boolean),
-      meta: {...meta, pane: kind}});
+    paneMemory[memoryKey] = bars;
+    advancedCandles(chart, bars,
+      {plugins: plugins(), meta: {...meta, pane: kind}});
   });
   return pane;
 }
@@ -1590,8 +1622,10 @@ function renderChartModal() {
         "it on cadence. (2) cockpit/" + state.tradeKey.slice(7) +
         "/<slug> = this trade's own cells, same card grammar as the " +
         "desk (live quotes for candidate contracts, tables, custom_d3, " +
-        "news). (3) plans/" + state.tradeKey.slice(7) + " for " +
-        "management logic. Member says: ",
+        "news). (3) if the member describes how to manage the " +
+        "position, write plans/" + state.tradeKey.slice(7) +
+        " {plan: their words, status: requested} and compile it to a " +
+        "draft program this turn. Member says: ",
       placeholder: "build for this trade — “gamma levels on the " +
         "underlying”, “watch the 530C and 540C side by side”, " +
         "“countdown to CPI”…",
@@ -1609,7 +1643,7 @@ function renderChartModal() {
 function openChartModal(tradeKey) {
   chartModalState.tradeKey = tradeKey;
   chartModalState.contract = chartModalState.contract
-    || {tf: "5m", plugins: new Set(["plan"])};
+    || {tf: "5m", plugins: new Set(["plan", "ticks"])};
   chartModalState.underlying = chartModalState.underlying
     || {tf: "daily", plugins: new Set(["zones"])};
   renderChartModal();
@@ -1746,55 +1780,34 @@ function managementCell(tradeKey, trade, view) {
   const cell = el("td", {class: "mgmt"});
   const id = tradeKey.slice(7);
   const plan = view.context[`plans/${id}`];
-  const head = el("div", {class: "mgmt-plan"});
-  const chip = el("button", {type: "button",
-    class: `state s-plan-${plan?.status || "unmanaged"} plan-chip`,
-    title: plan?.program ? "inspect this plan"
-      : plan ? "the desk is compiling this plan" : "write a plan"},
-    plan?.status || "no plan");
-  chip.addEventListener("click", () => {
-    if (plan?.program) openPlanModal(id);
-  });
-  head.append(chip);
-  if (plan?.status === "paused" && plan.program) {
-    const resume = el("button", {type: "button", class: "desk-rename"},
-      "resume");
-    resume.addEventListener("click", () => openPlanModal(id));
-    head.append(resume);
-  }
-  cell.append(head);
-  if (plan?.plan) cell.append(el("div", {class: "mgmt-words"},
-    `“${String(plan.plan).slice(0, 160)}${plan.plan.length > 160 ? "…" : ""}”`));
-  if (plan?.status === "requested")
-    cell.append(el("div", {class: "muted"},
-      "waiting for the desk to compile a program…"));
-  if (plan?.last_error)
-    cell.append(el("div", {class: "violation"}, `⚠ ${plan.last_error}`));
-  if (!plan && trade.state === "open-simulated") {
-    const start = el("button", {type: "button", class: "desk-rename"},
-      "manage…");
-    start.addEventListener("click", () => {
-      const ask = el("div", {class: "plan-ask"});
-      const line = el("input", {type: "text", placeholder:
-        "how should this position be managed? e.g. “take 100%, trail " +
-        "1.0 below the high after that”"});
-      const send = el("button", {type: "button"}, "request");
-      send.addEventListener("click", () => requestPlan(id, line.value));
-      line.addEventListener("keydown", event => {
-        if (event.key === "Enter") requestPlan(id, line.value);
-      });
-      ask.append(line, send);
-      start.replaceWith(ask);
-      line.focus();
+  if (!plan) {
+    // No plan yet: one orange word. Click it and the cockpit opens —
+    // talk to the agent, the plan lands, and it draws on the chart.
+    const create = el("button", {type: "button",
+      class: "state s-plan-create plan-chip",
+      title: "create a management plan — opens this trade's cockpit"},
+      "create");
+    create.addEventListener("click", () => {
+      openChartModal(tradeKey);
+      setTimeout(() => document.querySelector(
+        "#overlay-composer input")?.focus(), 900);
     });
-    cell.append(start);
+    cell.append(create);
+    return cell;
   }
-  if (trade.invalidation) {
-    const inv = el("div", {class: "invalidation"});
-    inv.append(el("b", {}, "invalidation "));
-    inv.append(document.createTextNode(trade.invalidation));
-    cell.append(inv);
-  }
+  const chip = el("button", {type: "button",
+    class: `state s-plan-${plan.status} plan-chip`,
+    title: plan.program
+      ? "inspect this plan — explanation, code, live test verdicts"
+      : "the desk is compiling this plan"},
+    plan.status === "requested" ? "compiling…" : plan.status);
+  chip.addEventListener("click", () => {
+    if (plan.program) openPlanModal(id);
+  });
+  cell.append(chip);
+  if (plan.last_error)
+    cell.append(el("span", {class: "violation", title: plan.last_error},
+      " ⚠"));
   return cell;
 }
 
