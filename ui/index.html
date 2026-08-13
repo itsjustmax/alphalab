@@ -1539,20 +1539,27 @@ const CHART_PLUGINS = {
   ema9: {id: "ema9", label: "EMA 9", appliesTo: "both",
     draw: ctx => linePlugin(emaSeries(ctx.bars, 9), ctx, "#f5a524")},
   plan: {id: "plan", label: "plan", appliesTo: "contract",
-    levels: ctx => [ctx.meta.entry, ctx.meta.exitLimit,
-      ...Object.values(ctx.meta.plan?.state || {})
-        .filter(v => typeof v === "number")].filter(isFinite),
+    levels: ctx => {
+      const hi = Math.max(...ctx.bars.map(b => b.high));
+      return [ctx.meta.entry, ctx.meta.exitLimit,
+        ...Object.values(ctx.meta.plan?.state || {})
+          .filter(v => typeof v === "number" && v <= hi * 4)]
+        .filter(isFinite);
+    },
     draw: ctx => {
       levelLine(ctx, ctx.meta.entry, "var(--muted)",
         `entry ${ctx.meta.entry}`);
       levelLine(ctx, ctx.meta.exitLimit, "var(--up)",
         `exit ${ctx.meta.exitLimit}`);
-      // The plan's LIVE state: every numeric field the program keeps
-      // (stop, high, ratchet level…) draws as a labeled line — watch
-      // the trail move as the runner updates state.
+      // The plan's LIVE state draws as labeled lines — but ONLY the
+      // fields living on this chart's scale: a bot's state may carry
+      // underlying prices (mapped walls), and a 775 wall on a $0.26
+      // premium chart is a different world, not a level.
+      const hi = Math.max(...ctx.bars.map(b => b.high));
       for (const [name, value] of
            Object.entries(ctx.meta.plan?.state || {})) {
-        if (typeof value === "number" && isFinite(value))
+        if (typeof value === "number" && isFinite(value)
+            && value <= hi * 4)
           levelLine(ctx, value, "var(--warn)", `${name} ${value}`);
       }
     }},
