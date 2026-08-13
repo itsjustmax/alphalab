@@ -43,20 +43,20 @@
   #desk-name input { background: var(--surface-2); color: var(--text);
     border: 1px solid var(--accent); border-radius: 6px; font: inherit;
     padding: .1rem .4rem; width: 14rem; }
-  #live-switch { position: relative; }
+  #live-switch { position: static; }
   #live-pill { font-size: .78rem; border-radius: 8px; cursor: pointer;
     font-family: inherit; padding: .3rem .6rem;
     background: none; border: 1px solid var(--border); color: var(--muted); }
   #live-pill.off { border-color: var(--border); }
   #live-pill.on { border-color: var(--up); color: var(--up); }
   #live-pill.killed { border-color: var(--down); color: var(--down); }
-  #live-panel { position: absolute; right: 0; top: 2.2rem; z-index: 80;
-    width: 300px; background: var(--surface);
+  #live-panel { width: 100%; background: var(--surface);
     border: 1px solid var(--border-strong); border-radius: 12px;
-    box-shadow: 0 16px 40px rgba(0,0,0,.5); padding: .7rem;
-    display: flex; flex-direction: column; gap: .5rem; font-size: .8rem; }
-  #live-panel .lp-row { display: flex; align-items: center; gap: .5rem;
-    justify-content: space-between; }
+    padding: .6rem .9rem; margin: .5rem 0;
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: .6rem 1.2rem; font-size: .8rem; }
+  #live-panel .lp-row { display: inline-flex; align-items: center;
+    gap: .5rem; }
   #live-panel input { background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 7px;
     padding: .3rem .5rem; font: inherit; font-size: .76rem; width: 7.5rem; }
@@ -312,6 +312,15 @@
     font-size: .8rem; }
   .cockpit-item.clock b { color: var(--warn); }
   .cockpit .countdown { font-family: var(--mono); }
+  .thoughts-cell { margin-top: .7rem; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: .7rem .9rem; }
+  .thoughts-cell h4 { margin: 0 0 .2rem; font-size: .8rem;
+    text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); }
+  .thoughts-cell p { margin: .1rem 0 .4rem; font-size: .76rem; }
+  .thought-line { font-size: .74rem; margin: .15rem 0; }
+  #overlay-composer { max-width: none; margin-top: .4rem; }
   .cockpit .desk-rename.armed { border-color: var(--up);
     color: var(--up); font-weight: 700; }
   .arm-inline { display: inline-flex; gap: .3rem; }
@@ -371,7 +380,6 @@
   <span class="controls">
     <span id="live-switch">
       <button id="live-pill" type="button" title="live trading controls">live: …</button>
-      <div id="live-panel" hidden></div>
     </span>
     <span id="desk-switch">
       <button id="desks-link" type="button"
@@ -383,6 +391,7 @@
   </span>
 </header>
 <div id="liveness"></div>
+<div id="live-panel" hidden></div>
 
 <div id="chart-modal" hidden>
   <div id="chart-modal-card">
@@ -1858,10 +1867,12 @@ function overlaysText(meta) {
     const clocks = (overlay.clocks || [])
       .map(c => `${c.label || ""} at ${c.at}`).join(", ");
     if (levels || clocks)
-      lines.push(`overlay ${overlay.key.split("/").pop()} ` +
+      lines.push(`study ${overlay.key.split("/").pop()} ` +
         `[${overlay.target || "contract"}]: ${levels}${clocks ? " · " + clocks : ""}`);
+    if (overlay.note)
+      lines.push(`  note: ${String(overlay.note).slice(0, 240)}`);
   }
-  return lines.join("\n") || "overlays: none";
+  return lines.join("\n") || "studies: none active";
 }
 function cockpitBrief(meta, state) {
   const trade = lastView?.context?.[meta.tradeKey] || {};
@@ -1908,10 +1919,12 @@ function substituteMeta(node, meta) {
   return node;
 }
 function libraryPlugins(pane) {
+  // studies/ is the home; legacy plugins/ entries still read
   return Object.entries(lastView?.context || {})
-    .filter(([key, value]) => key.startsWith("plugins/") && value
+    .filter(([key, value]) =>
+      (key.startsWith("studies/") || key.startsWith("plugins/")) && value
       && (value.appliesTo === pane || value.appliesTo === "both"))
-    .map(([key, value]) => ({slug: key.slice(8), ...value}));
+    .map(([key, value]) => ({slug: key.split("/", 2)[1], ...value}));
 }
 function libraryInstanceKey(meta, slug, pane) {
   return `overlays/${meta.tradeKey.slice(7)}-lib-${pane}-${slug}`;
@@ -1973,7 +1986,7 @@ function pluginSidebar(pane, meta, state) {
   // design a new plugin — right here in the sidebar
   const design = el("div", {class: "plugin-design"});
   design.append(el("div", {class: "muted", style: "font-size:.72rem"},
-    "design a new plugin"));
+    "design a new study"));
   const input = el("input", {type: "text",
     placeholder: "describe it — “VWAP”, “yesterday’s value area”…"});
   const send = el("button", {type: "button", class: "desk-rename"},
@@ -1984,7 +1997,7 @@ function pluginSidebar(pane, meta, state) {
     const main = document.querySelector("#overlay-composer input");
     const form = document.querySelector("#overlay-composer form");
     if (main && form) {
-      main.value = `new ${pane} plugin: ${wish}`;
+      main.value = `new ${pane} study: ${wish}`;
       form.requestSubmit();
       input.value = "";
       input.placeholder = "asked — the plugin lands in this list";
@@ -2001,8 +2014,8 @@ function pluginSidebar(pane, meta, state) {
 function sidebarToggle(pane) {
   const open = openSidebars.has(pane);
   const toggle = el("button", {type: "button", class: "plugin-chip"
-    + (open ? " on" : ""), title: "open/close this chart's plugins"},
-    open ? "plugins ▸" : "plugins ▾");
+    + (open ? " on" : ""), title: "open/close this chart's studies"},
+    open ? "studies ▸" : "studies ▾");
   toggle.addEventListener("click", () => {
     openSidebars.has(pane) ? openSidebars.delete(pane)
       : openSidebars.add(pane);
@@ -2182,8 +2195,24 @@ function renderChartModal() {
   document.getElementById("chart-modal-title").textContent =
     `${label} — trade cockpit`;
   const body = document.getElementById("chart-modal-body");
+  const thoughts = el("div", {class: "thoughts-cell"});
+  thoughts.append(el("h4", {}, "your thoughts on this trade"));
+  thoughts.append(el("p", {class: "muted"},
+    "talk to the trade's agent — it sees the thesis, the candidate " +
+    "contracts, the live data, the plan state, and every study note " +
+    "below, and can modify any of it on your word"));
+  const recent = (lastView?.conversation || []).slice(-40).filter(line =>
+    String(line.text || "").toLowerCase()
+      .includes(state.tradeKey.slice(7).split("-")[0]))
+    .slice(-3);
+  for (const line of recent)
+    thoughts.append(el("div", {class: "muted thought-line"},
+      `${line.name}: ${String(line.text).slice(0, 150)}`));
+  const thoughtsMount = el("div", {id: "thoughts-mount"});
+  thoughts.append(thoughtsMount);
   body.replaceChildren(
     cockpitStrip(meta),
+    thoughts,
     tickPane(meta),
     chartPane("contract", meta, state.contract),
     chartPane("underlying", meta, state.underlying));
@@ -2204,7 +2233,9 @@ function renderChartModal() {
   // writes overlays/<id> data entries; the custom plugin renders them
   composerReady.then(() => {
     if (document.getElementById("chart-modal").hidden) return;
-    const mount = el("div", {class: "pane", id: "overlay-composer"});
+    const mount = document.getElementById("thoughts-mount")
+      || el("div", {class: "pane"});
+    mount.id = "overlay-composer";
     Manifold.composer({
       mount, envId, token, scope: "overlay",
       prelude: "CURRENT COCKPIT (the member's live picture):\n" +
@@ -2220,8 +2251,8 @@ function renderChartModal() {
         "it on cadence. (2) cockpit/" + state.tradeKey.slice(7) +
         "/<slug> = this trade's own cells, same card grammar as the " +
         "desk (live quotes for candidate contracts, tables, custom_d3, " +
-        "news). If the message starts 'new <pane> plugin:', design a " +
-        "REUSABLE library plugin at plugins/<slug> {label, describe, " +
+        "news). If the message starts 'new <pane> study:', design a " +
+        "REUSABLE study at studies/<slug> {label, describe, " +
         "appliesTo, overlay|program with {\"$\": \"symbol\"}-style " +
         "placeholders} — the member toggles it onto charts. " +
         "(3) if the member describes how to manage the " +
@@ -2232,7 +2263,6 @@ function renderChartModal() {
         "underlying”, “watch the 530C and 540C side by side”, " +
         "“countdown to CPI”…",
     });
-    body.append(mount);
   }).catch(() => {});
   document.getElementById("chart-modal").hidden = false;
   // live: repaint while open — fresh bars (1m ttl), live plan state,
