@@ -1199,26 +1199,83 @@ async function pnlLoop() {
       + (staleNote ? " mark-stale" : "");
     watch.cell.title = `bid-side mark, streaming as of ` +
       `${quote.observed_at || "?"} · entry $${watch.entry}`;
+    if (!staleNote) feedSpark(key, mark);  // live ticks extend the line
     pnlMemory[key] = {text: watch.cell.textContent,
       className: watch.cell.className, title: watch.cell.title};
   }
   if (pnlWatch.size) pnlTimer = setTimeout(pnlLoop, 15000);
 }
 // The premium's path since entry, as a tiny two-tone area: green
-// above the entry price, red below — the trade's whole life at a
-// glance. Hourly broker bars, cached 15 minutes.
+// above the entry price, red below. Seeded from historical bars at
+// load; while the desk runs, the live tick stream extends it — the
+// last point is the current 5-minute bucket, updated as ticks print.
+const sparkState = {};
+function drawSpark(state) {
+  if (!state.holder.isConnected || state.closes.length < 2) return;
+  const closes = state.closes;
+  const entry = state.entry;
+  const w = 110, h = 34;
+  const lo = Math.min(...closes, entry), hi = Math.max(...closes, entry);
+  const y = value => hi === lo ? h / 2
+    : h - ((value - lo) / (hi - lo)) * (h - 4) - 2;
+  const x = index => (index / (closes.length - 1)) * w;
+  const points = closes.map((value, index) =>
+    `${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
+  const baseline = y(entry).toFixed(1);
+  const area = `M0,${baseline} L` + points.replace(/ /g, " L") +
+    ` L${w},${baseline} Z`;
+  const last = closes[closes.length - 1];
+  const suffix = state.id;
+  state.holder.innerHTML =
+    `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+    `<defs><clipPath id="up-${suffix}"><rect x="0" y="0" ` +
+    `width="${w}" height="${baseline}"/></clipPath>` +
+    `<clipPath id="dn-${suffix}"><rect x="0" y="${baseline}" ` +
+    `width="${w}" height="${h}"/></clipPath></defs>` +
+    `<path d="${area}" fill="var(--up)" opacity=".35" ` +
+    `clip-path="url(#up-${suffix})"/>` +
+    `<path d="${area}" fill="var(--down)" opacity=".35" ` +
+    `clip-path="url(#dn-${suffix})"/>` +
+    `<line x1="0" y1="${baseline}" x2="${w}" y2="${baseline}" ` +
+    `stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1"/>` +
+    `<polyline points="${points}" fill="none" ` +
+    `stroke="${last >= entry ? "var(--up)" : "var(--down)"}" ` +
+    `stroke-width="1.5"/></svg>`;
+  state.holder.title = `premium since entry $${entry} — now $${last}` +
+    (state.liveSince ? ` · live ticks since ${state.liveSince}` :
+     ` (historical bars)`);
+}
+function feedSpark(tradeKey, mark) {
+  // Called by the PnL loop with each fresh mark: the current 5-minute
+  // bucket updates in place; a new bucket appends a point.
+  const state = sparkState[tradeKey];
+  if (!state || !isFinite(mark)) return;
+  const bucket = Math.floor(Date.now() / 300_000);
+  if (state.bucket === bucket) {
+    state.closes[state.closes.length - 1] = mark;
+  } else {
+    state.closes.push(mark);
+    state.bucket = bucket;
+    if (state.closes.length > 240) state.closes.shift();
+  }
+  if (!state.liveSince)
+    state.liveSince = new Date().toLocaleTimeString();
+  drawSpark(state);
+}
 function premiumSpark(tradeKey, trade, label) {
   const cell = el("div", {class: "spark-cell"});
   const fill = trade.fill;
   const args = contractArgs(label);
   if (!fill || args.sec_type !== "OPT") { cell.textContent = "—"; return cell; }
+  const kept = sparkState[tradeKey];
+  if (kept) {  // a rebuilt row re-adopts the running series
+    kept.holder = cell;
+    drawSpark(kept);
+    return cell;
+  }
   const entryClock = Date.parse(fill.observed_at);
   const days = Math.max(1, Math.min(30, Math.ceil(
     (Date.now() - (isNaN(entryClock) ? Date.now() : entryClock)) / 86_400_000)));
-  // Finest resolution whose full since-entry history fits the lane's
-  // 200-bar window: 5-minute bars (~78/session) up to ~2 days, then
-  // step down. use_rth on the lane means closed hours never appear,
-  // and the index-based x-axis compresses the session gaps away.
   const perDay = [["5 mins", 78], ["15 mins", 26],
                   ["30 mins", 13], ["1 hour", 7]];
   const [barSize] = perDay.find(([, n]) => days * n <= 200)
@@ -1228,9 +1285,6 @@ function premiumSpark(tradeKey, trade, label) {
     const bars = (receipt?.ok && (receipt.data?.rows || receipt.data?.bars)) || [];
     let since = bars.filter(bar =>
       isNaN(entryClock) || Date.parse(bar.bar_time) >= entryClock - 3_600_000);
-    // A young position has few bars since entry — show the recent
-    // window instead so the picture exists from day one; the entry
-    // baseline still tells the green/red story.
     if (since.length < 2) since = bars.slice(-12);
     if (since.length < 2) {
       cell.textContent = "…";
@@ -1238,38 +1292,15 @@ function premiumSpark(tradeKey, trade, label) {
         : "bar lane quiet: " + (receipt?.gaps || []).join("; ");
       return;
     }
-    const closes = since.map(bar => Number(bar.close));
-    const entry = Number(fill.price);
-    const w = 110, h = 34;
-    const lo = Math.min(...closes, entry), hi = Math.max(...closes, entry);
-    const y = value => hi === lo ? h / 2
-      : h - ((value - lo) / (hi - lo)) * (h - 4) - 2;
-    const x = index => (index / (closes.length - 1)) * w;
-    const points = closes.map((value, index) =>
-      `${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
-    const baseline = y(entry).toFixed(1);
-    const area = side =>
-      `M0,${baseline} L` + points.replace(/ /g, " L") + ` L${w},${baseline} Z`;
-    const last = closes[closes.length - 1];
-    const svg =
-      `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
-      `<defs><clipPath id="up-${tradeKey.slice(7)}"><rect x="0" y="0" ` +
-      `width="${w}" height="${baseline}"/></clipPath>` +
-      `<clipPath id="dn-${tradeKey.slice(7)}"><rect x="0" y="${baseline}" ` +
-      `width="${w}" height="${h}"/></clipPath></defs>` +
-      `<path d="${area()}" fill="var(--up)" opacity=".35" ` +
-      `clip-path="url(#up-${tradeKey.slice(7)})"/>` +
-      `<path d="${area()}" fill="var(--down)" opacity=".35" ` +
-      `clip-path="url(#dn-${tradeKey.slice(7)})"/>` +
-      `<line x1="0" y1="${baseline}" x2="${w}" y2="${baseline}" ` +
-      `stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1"/>` +
-      `<polyline points="${points}" fill="none" ` +
-      `stroke="${last >= entry ? "var(--up)" : "var(--down)"}" ` +
-      `stroke-width="1.5"/></svg>`;
-    cell.innerHTML = svg;
-    const latestBar = since[since.length - 1];
-    cell.title = `premium since entry $${entry} — latest bar close ` +
-      `$${last} (${latestBar.bar_time}); hourly broker bars`;
+    sparkState[tradeKey] = {
+      id: tradeKey.slice(7),
+      closes: since.map(bar => Number(bar.close)),
+      entry: Number(fill.price),
+      bucket: Math.floor(Date.now() / 300_000) - 1,
+      holder: cell,
+      liveSince: "",
+    };
+    drawSpark(sparkState[tradeKey]);
   });
   return cell;
 }

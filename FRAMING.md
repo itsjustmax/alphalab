@@ -112,6 +112,16 @@ Entering is placing a **working paper order**: author
                           "contract": "<display label>"},
                  "minutes": 2, "value_path": "result.data", "into": "check"}}
 
+**An entry condition is an armed order, never a sentence.** A thesis
+that says "enter if the ask reaches $4.00 at the open" is not
+subscribed to anything — prose watches nothing, and the idea slips by
+while nobody is looking. The moment a trade idea has a concrete entry
+level, arm the order card AT that level: the standing stream and the
+market gate are the watcher, tick by tick, and the fill records itself
+the moment the market arrives. Every live trade's contracts hold their
+streams automatically (idea and watching states included), so the data
+to catch the entry is always flowing before you need it.
+
 The card is a standing paper limit: pick `price` at or inside the last
 receipted market, in line with the member's standing direction (their
 intake and their answers to your asks — when direction is genuinely

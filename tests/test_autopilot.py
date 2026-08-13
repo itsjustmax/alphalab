@@ -667,3 +667,14 @@ def test_position_contract_streams_are_healed_too(tmp_path):
     # healed with FULL option args, stop then start
     assert calls[0][0] == "stop" and calls[0][2] == 235.0
     assert calls[1][0] == "start" and calls[1][1] == "NVDA"
+
+
+def test_idea_contracts_hold_streams_and_get_health_checked():
+    context = {"trades/amd": {"state": "idea",
+                              "contracts": ["AMD 20260821 530C"]},
+               "trades/old": {"state": "closed",
+                              "contracts": ["TSLA 20260821 500C"]}}
+    holders = autopilot.stream_holders(context)
+    keys = [(h.get("symbol"), h.get("strike")) for h in holders]
+    assert ("AMD", 530.0) in keys, "an idea holds its contract's stream"
+    assert not any(s == "TSLA" for s, _ in keys), "closed trades release"

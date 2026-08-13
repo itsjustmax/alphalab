@@ -143,14 +143,21 @@ def stream_holders(context):
                     and isinstance(declaration.get("args"), dict) \
                     and declaration["args"].get("symbol"):
                 armed.append(declaration["args"])
+    # EVERY live trade holds its contracts' streams — an idea with no
+    # eyes on its contract is how an entry gets missed. Closed trades
+    # release theirs.
     for key, trade in (context or {}).items():
         if not key.startswith("trades/") or not isinstance(trade, dict):
             continue
-        if trade.get("state") != "open-simulated":
+        if trade.get("state") == "closed":
             continue
-        fill_contract = (trade.get("fill") or {}).get("contract")
-        if fill_contract:
-            armed.append(parse_contract_label(str(fill_contract)))
+        for candidate in [(trade.get("fill") or {}).get("contract"),
+                          *(trade.get("contracts") or [])]:
+            if not candidate:
+                continue
+            parsed = parse_contract_label(str(candidate))
+            if "expiration" in parsed:
+                armed.append(parsed)
     return [args for args in armed if args]
 
 
@@ -770,21 +777,22 @@ class Pilot:
         # Open positions' own contracts are watched the same way — the
         # PnL mark reads their stream, so a dead one lies to the member.
         contracts = []
+        seen_labels = set()
         for key, trade in (context or {}).items():
             if not key.startswith("trades/") or not isinstance(trade, dict):
                 continue
-            if trade.get("state") != "open-simulated":
-                continue
-            label = str((trade.get("fill") or {}).get("contract") or "")
-            parsed = parse_contract_label(label)
-            if "expiration" not in parsed:
-                for candidate in (trade.get("contracts") or []):
-                    parsed = parse_contract_label(str(candidate))
-                    if "expiration" in parsed:
-                        label = str(candidate)
-                        break
-            if "expiration" in parsed:
-                contracts.append((label, parsed))
+            if trade.get("state") == "closed":
+                continue  # ideas and watchers hold eyes too — an entry
+                          # can only be caught by a stream that exists
+            for candidate in [(trade.get("fill") or {}).get("contract"),
+                              *(trade.get("contracts") or [])]:
+                if not candidate:
+                    continue
+                label = str(candidate)
+                parsed = parse_contract_label(label)
+                if "expiration" in parsed and label not in seen_labels:
+                    seen_labels.add(label)
+                    contracts.append((label, parsed))
         if not symbols and not contracts:
             return None
         try:
