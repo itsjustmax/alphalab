@@ -50,9 +50,14 @@ def engine_probes():
     expect_refusal("equity override flag",
                    {"symbol": "AAPL", "sec_type": "STK"},
                    {"allow_equity_orders": True})
-    expect_refusal("valid option, gates off",
+    # NEVER a submittable probe: this one violates the premium cap, so
+    # it is refused whether the live gates are on or off. A probe that
+    # could pass when gates are on would BE an order — forbidden here.
+    expect_refusal("option above premium cap",
                    {"symbol": "SPY", "sec_type": "OPT",
-                    "expiration": "20260814", "strike": 783, "right": "C"})
+                    "expiration": "20260814", "strike": 783, "right": "C"},
+                   {"bid": 99.0, "ask": 99.5,
+                    "entry_price": 99.25, "max_contract_premium": 6.0})
     return failures
 
 
