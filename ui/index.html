@@ -37,6 +37,8 @@
   header { display: flex; align-items: baseline; gap: .9rem; flex-wrap: wrap; }
   header .controls { margin-left: auto; display: flex; gap: .5rem;
                      align-items: center; }
+  #desk-name { color: var(--muted); font-size: .95rem;
+    font-weight: 500; align-self: center; }
   #desk-switch { position: relative; }
   #desks-link { color: var(--muted); font-size: .78rem;
     background: none; cursor: pointer; font-family: inherit;
@@ -55,6 +57,11 @@
   .desk-item.here { border: 1px solid var(--accent); cursor: default; }
   .desk-item.subtle b { color: var(--muted); font-weight: 500; }
   .desk-item .muted { font-size: .74rem; }
+  .desk-rename { align-self: flex-start; margin-top: .25rem;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 6px; font: inherit; font-size: .7rem;
+    padding: .15rem .5rem; cursor: pointer; }
+  .desk-rename:hover { color: var(--text); border-color: var(--accent); }
   h1 { font-size: 1.7rem; margin: 0; letter-spacing: -.02em; font-weight: 750;
        background: linear-gradient(100deg, var(--text) 60%, var(--accent));
        -webkit-background-clip: text; background-clip: text;
@@ -256,6 +263,7 @@
 
 <header>
   <h1 id="title">…</h1>
+  <span id="desk-name"></span>
   <span class="controls">
     <span id="desk-switch">
       <button id="desks-link" type="button"
@@ -382,8 +390,18 @@ async function deskLabel(id) {
     if (positions) parts.push(`${positions} open position${positions > 1 ? "s" : ""}`);
     if (!parts.length && ctx.topic) parts.push(String(ctx.topic).slice(0, 40));
     if (!parts.length) parts.push("fresh desk — intake waiting");
-    return parts.join(" · ");
-  } catch { return "unreachable"; }
+    return {name: ctx["desk/name"] || "", detail: parts.join(" · ")};
+  } catch { return {name: "", detail: "unreachable"}; }
+}
+async function renameDesk() {
+  const current = lastView?.context?.["desk/name"] || "";
+  const name = window.prompt("Name this desk", current);
+  if (name === null) return;
+  await api("POST", `/environments/${envId}/context`,
+    {key: "desk/name", value: name.trim() || null});
+  document.getElementById("desk-name").textContent =
+    name.trim() ? `· ${name.trim()}` : "";
+  document.getElementById("desk-menu").hidden = true;
 }
 async function openDeskMenu() {
   const menu = document.getElementById("desk-menu");
@@ -398,12 +416,25 @@ async function openDeskMenu() {
     const here = env.environment_id === envId;
     const item = el("button", {type: "button",
       class: "desk-item" + (here ? " here" : "")});
-    item.append(el("b", {}, `desk ${env.environment_id.slice(0, 8)}`
-      + (here ? " — you are here" : "")));
+    const title = el("b", {}, `desk ${env.environment_id.slice(0, 8)}`
+      + (here ? " — you are here" : ""));
+    item.append(title);
     const sub = el("span", {class: "muted"}, "…");
     item.append(sub);
-    deskLabel(env.environment_id).then(label => sub.textContent = label);
-    if (!here) item.addEventListener("click", () =>
+    deskLabel(env.environment_id).then(label => {
+      if (label.name) title.textContent =
+        label.name + (here ? " — you are here" : "");
+      sub.textContent = label.detail;
+    });
+    if (here) {
+      const rename = el("button", {type: "button", class: "desk-rename",
+        title: "rename this desk"}, "rename");
+      rename.addEventListener("click", event => {
+        event.stopPropagation();
+        renameDesk();
+      });
+      item.append(rename);
+    } else item.addEventListener("click", () =>
       location.href = `/app/${env.environment_id}?token=${token}`);
     menu.append(item);
   }
@@ -634,12 +665,32 @@ function contextDiff(previous, current) {
   return changed;
 }
 
+// What the member SEES only rebuilds when what it shows changes.
+// Live surfaces paint themselves in place (watchlist ticks, PnL marks,
+// the status bar), so their churn — quote restamps, autopilot stamps,
+// order-check clocks, audit refreshes — must not nuke the page. The
+// stable fingerprint drops those volatile fields; everything else
+// still re-renders on real change.
+function stableFingerprint(view) {
+  const stable = {};
+  for (const [key, value] of Object.entries(view.context)) {
+    if (key.startsWith("desk/") || key.startsWith("~")) continue;
+    if (key.startsWith("quotes/")) { stable[key] = 1; continue; }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const copy = {...value};
+      delete copy.as_of; delete copy.refreshed_at;
+      delete copy.checked_at; delete copy.last_run;
+      if (copy.check && typeof copy.check === "object")
+        copy.check = {verdict: copy.check.verdict};
+      stable[key] = copy;
+    } else stable[key] = value;
+  }
+  return JSON.stringify({stable,
+    talk: view.conversation.length, harness: view.harness.version,
+    name: view.context["desk/name"] || ""});
+}
+
 function render(view) {
-  // Re-render only on real change: a quiet 5s poll must not wipe
-  // hover state or half-built interactions.
-  const fingerprint = JSON.stringify(view);
-  if (fingerprint === lastRendered) return;
-  lastRendered = fingerprint;
   lastView = view;
   you = view.you;
 
@@ -667,8 +718,15 @@ function render(view) {
   prevConversationLength = view.conversation.length;
 
   document.getElementById("title").textContent = view.harness.name;
+  document.getElementById("desk-name").textContent =
+    view.context["desk/name"] ? `· ${view.context["desk/name"]}` : "";
   renderIntake(view);
   updateLiveness();
+
+  const fingerprint = stableFingerprint(view);
+  if (fingerprint === lastRendered) return;  // nothing visible changed
+  lastRendered = fingerprint;
+  const scrollY = window.scrollY;
   const container = document.getElementById("views");
   container.replaceChildren();
   for (const section of [
@@ -682,6 +740,7 @@ function render(view) {
     renderConversation(view),
     renderWorkings(view),
   ]) if (section) container.append(section);
+  window.scrollTo(0, scrollY);  // a rebuild must not move the member
 }
 
 function updateLiveness() {
@@ -765,6 +824,7 @@ function renderWatchlist(view) {
                     `${symbol} …`);
     chip._fold = chipFocus(`watchlist/${symbol}`, chip, symbol);
     chip.append(chip._fold);
+    repaintFromMemory(chip, symbol);  // rebuilds keep the last price
     strip.append(chip);
   }
   return section.appendChild(strip), section;
@@ -788,14 +848,22 @@ function chipFocus(key, chip, symbol) {
 // every symbol's freshest persisted tick, self-pacing as fast as the
 // pipe allows (~1/second). Change is measured from the last close.
 // EOD closes are the honest fallback when the broker lane is down.
+// The last painted state per symbol: a rebuilt chip starts from what
+// the member was already seeing, never from a blank.
+const tickMemory = {};
 async function fillTick(chip, symbol) {
   const eod = await toolData("price_summary", {symbol}, 10);
   if (!eod?.ok) {
+    if (tickMemory[symbol]) {  // keep the number; note the gap quietly
+      chip.title = "refresh failed: " + (eod?.gaps || []).join("; ");
+      return;
+    }
     chip.textContent = `${symbol} — unavailable`;
     chip.title = (eod?.gaps || []).join("; ");
     return;
   }
   const d = eod.data;
+  tickMemory[symbol] = {kind: "eod", d, summary: eod.summary};
   chip.replaceChildren(
     el("b", {}, symbol + " "),
     document.createTextNode(`${d.close_label} `),
@@ -804,8 +872,23 @@ async function fillTick(chip, symbol) {
   if (chip._fold) chip.append(chip._fold);
   chip.title = `EOD close (stream unavailable) · ${eod.summary}`;
 }
+function repaintFromMemory(chip, symbol) {
+  const kept = tickMemory[symbol];
+  if (!kept) return false;
+  if (kept.kind === "tick") return applyTick(chip, kept.quote);
+  const d = kept.d;
+  chip.replaceChildren(
+    el("b", {}, symbol + " "),
+    document.createTextNode(`${d.close_label} `),
+    el("span", {class: d.change_1d_pct >= 0 ? "up" : "down"},
+      `${d.change_1d_pct >= 0 ? "+" : ""}${d.change_1d_pct}%`));
+  if (chip._fold) chip.append(chip._fold);
+  chip.title = `EOD close (stream unavailable) · ${kept.summary}`;
+  return true;
+}
 function applyTick(chip, quote) {
   if (!quote || quote.last == null) return false;
+  tickMemory[chip.dataset.symbol] = {kind: "tick", quote};
   const close = Number(quote.close);
   const pct = close ? 100 * (quote.last - close) / close : null;
   chip.replaceChildren(
@@ -934,7 +1017,12 @@ function renderPositions(view) {
       .find(x => x && contractArgs(x).sec_type === "OPT")
       || contractLabel((c.fill || {}).contract || (c.contracts || [])[0] || "");
     if (c.state === "open-simulated" && f && held) {
-      pnl.textContent = "…";
+      const kept = pnlMemory[key];
+      if (kept) {  // a rebuilt row starts from the last painted mark
+        pnl.textContent = kept.text;
+        pnl.className = kept.className;
+        pnl.title = kept.title;
+      } else pnl.textContent = "…";
       pnlWatch.set(key, {cell: pnl, entry: f.price,
                          quantity: f.quantity || 1, label: held});
       paintPnlSoon();
@@ -983,6 +1071,7 @@ let pnlTimer = null;
 function paintPnlSoon() {
   if (!pnlTimer) pnlTimer = setTimeout(pnlLoop, 50);
 }
+const pnlMemory = {};
 async function pnlLoop() {
   pnlTimer = null;
   for (const [key, watch] of pnlWatch) {
@@ -993,6 +1082,13 @@ async function pnlLoop() {
     const mark = quote && (typeof quote.bid === "number" && quote.bid > 0
       ? quote.bid : (typeof quote.last === "number" ? quote.last : null));
     if (mark == null) {
+      const kept = pnlMemory[key];
+      if (kept) {  // hold the last real mark; whisper the staleness
+        watch.cell.textContent = kept.text;
+        watch.cell.className = kept.className;
+        watch.cell.title = kept.title + " · stream quiet right now";
+        continue;
+      }
       watch.cell.textContent = "no live mark";
       watch.cell.className = "val muted";
       watch.cell.title = (receipt?.gaps || []).join("; ") ||
@@ -1008,6 +1104,8 @@ async function pnlLoop() {
     watch.cell.className = "val " + (dollars >= 0 ? "up" : "down");
     watch.cell.title = `bid-side mark, streaming as of ` +
       `${quote.observed_at || "?"} · entry $${watch.entry}`;
+    pnlMemory[key] = {text: watch.cell.textContent,
+      className: watch.cell.className, title: watch.cell.title};
   }
   if (pnlWatch.size) pnlTimer = setTimeout(pnlLoop, 15000);
 }
