@@ -262,6 +262,18 @@
     font-size: .74rem; padding: .25rem .6rem; cursor: pointer; }
   .plugin-chip.plus { font-weight: 700; color: var(--accent);
     border-color: var(--accent); border-style: dashed; }
+  .drawer-holder { position: relative; }
+  .plugin-panel { position: absolute; right: 0; top: 1.9rem; z-index: 70;
+    min-width: 220px; background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.4); padding: .45rem;
+    display: flex; flex-direction: column; gap: .15rem;
+    max-height: 320px; overflow-y: auto; }
+  .plugin-row { display: flex; align-items: center; gap: .5rem;
+    font-size: .8rem; padding: .25rem .35rem; border-radius: 6px;
+    cursor: pointer; }
+  .plugin-row:hover { background: var(--surface-2); }
+  .plugin-panel .plugin-chip.plus { margin-top: .3rem; }
   .tf-chip.on, .plugin-chip.on { color: var(--text);
     border-color: var(--accent); }
   .pane-chart { margin-top: .5rem; min-height: 120px; }
@@ -1367,31 +1379,6 @@ const CHART_PLUGINS = {
     draw: ctx => zoneBands(ctx, "daily", .10)},
   zonesHourly: {id: "zonesHourly", label: "zones H", appliesTo: "underlying",
     draw: ctx => zoneBands(ctx, "hourly", .16)},
-  overlays: {id: "overlays", label: "custom", appliesTo: "both",
-    levels: ctx => overlayEntries(ctx.meta)
-      .filter(o => (o.target || "contract") === ctx.meta.pane)
-      .flatMap(o => [...(o.levels || []).map(l => Number(l.price)),
-        ...(o.bands || []).flatMap(b => [Number(b.lower), Number(b.upper)])])
-      .filter(isFinite),
-    draw: ctx => {
-      for (const overlay of overlayEntries(ctx.meta)) {
-        if ((overlay.target || "contract") !== ctx.meta.pane) continue;
-        for (const band of overlay.bands || []) {
-          const top = Math.max(0, Math.min(ctx.h, ctx.y(Number(band.upper))));
-          const bottom = Math.max(0, Math.min(ctx.h, ctx.y(Number(band.lower))));
-          if (bottom - top < 1) continue;
-          ctx.g.insert("rect", ":first-child")
-            .attr("x", 0).attr("width", ctx.w)
-            .attr("y", top).attr("height", bottom - top)
-            .attr("fill", /supply|resist/.test(String(band.side || ""))
-              ? "var(--down)" : "var(--accent)")
-            .attr("opacity", .12);
-        }
-        for (const level of overlay.levels || [])
-          levelLine(ctx, Number(level.price), "var(--accent)",
-            String(level.label || level.price));
-      }
-    }},
 };
 function advancedCandles(holder, bars, {plugins = [], meta = {}} = {}) {
   holder.replaceChildren();
@@ -1411,6 +1398,17 @@ function advancedCandles(holder, bars, {plugins = [], meta = {}} = {}) {
          ? plugin.levels({bars, meta}) : []) {
       lo = Math.min(lo, price); hi = Math.max(hi, price);
     }
+  // member-commissioned overlays are not optional decorations — they
+  // stretch the domain and always draw for their pane
+  const paneOverlays = meta.pane && meta.tradeKey ? overlayEntries(meta)
+    .filter(o => (o.target || "contract") === meta.pane) : [];
+  for (const overlay of paneOverlays) {
+    for (const level of overlay.levels || [])
+      if (isFinite(Number(level.price))) {
+        lo = Math.min(lo, Number(level.price));
+        hi = Math.max(hi, Number(level.price));
+      }
+  }
   const padY = (hi - lo) * 0.05 || 1;
   const y = d3.scaleLinear().domain([lo - padY, hi + padY])
     .range([ih, 0]);
@@ -1445,6 +1443,20 @@ function advancedCandles(holder, bars, {plugins = [], meta = {}} = {}) {
       .attr("fill", "var(--muted)").attr("font-size", "9px")
       .text(String(bars[index].bar_time).slice(5, 16).replace("T", " "));
   const ctx = {g, x, y, bars, w: iw, h: ih, meta, d3};
+  for (const overlay of paneOverlays) {
+    for (const band of overlay.bands || []) {
+      const top = Math.max(0, Math.min(ih, y(Number(band.upper))));
+      const bottom = Math.max(0, Math.min(ih, y(Number(band.lower))));
+      if (bottom - top >= 1)
+        g.insert("rect", ":first-child").attr("x", 0).attr("width", iw)
+          .attr("y", top).attr("height", bottom - top)
+          .attr("fill", /supply|resist/.test(String(band.side || ""))
+            ? "var(--down)" : "var(--accent)").attr("opacity", .12);
+    }
+    for (const level of overlay.levels || [])
+      levelLine(ctx, Number(level.price), "var(--accent)",
+        String(level.label || level.price));
+  }
   for (const plugin of plugins) plugin.draw(ctx);
   holder.append(svg.node());
 }
@@ -1575,7 +1587,10 @@ function tickPane(meta) {
   head.append(el("h4", {}, `${meta.label} — tape`));
   head.append(el("span", {class: "muted", style: "font-size:.72rem"},
     "every tick, persisted; ~last 200"));
-  pluginLibraryChips(head, "tape", meta);
+  head.append(pluginDrawer("tape", meta, null));
+  head.append(paneFoldChip(
+    `cockpit ${meta.tradeKey.slice(7)} · tape`,
+    () => [tapeText(meta), planText(meta)].join("\n")));
   pane.append(head);
   const chart = el("div", {class: "pane-chart"});
   pane.append(chart);
@@ -1646,6 +1661,89 @@ function tickPane(meta) {
   if (buffer.length) paint();
   return pane;
 }
+// Every cockpit surface has a TEXTUAL representation — the same
+// picture the member sees, as bounded text an agent can reason over.
+// The fold button on a pane opens a conversation carrying exactly
+// this; the cockpit composer includes the whole brief; a managing
+// agent needs nothing the member cannot also read.
+function tapeText(meta) {
+  const rows = tapeMemory[meta.label] || [];
+  if (!rows.length) return "tape: no persisted ticks in view";
+  const ticks = [...rows].reverse();
+  const newest = ticks[ticks.length - 1];
+  const lasts = ticks.map(t => Number(t.last)).filter(isFinite);
+  return `tape (${ticks.length} ticks ` +
+    `${String(ticks[0].quote_time).slice(11, 19)}→` +
+    `${String(newest.quote_time).slice(11, 19)}Z): ` +
+    `now ${newest.bid}×${newest.ask} last ${newest.last}; ` +
+    `window lo ${Math.min(...lasts)} hi ${Math.max(...lasts)}`;
+}
+function paneBarsText(meta, kind, tf) {
+  const bars = paneMemory[`${meta.tradeKey}|${kind}|${tf}`] || [];
+  if (!bars.length) return `${kind} ${tf}: no bars in view`;
+  const last = bars[bars.length - 1];
+  const highs = bars.map(b => Number(b.high)).filter(isFinite);
+  const lows = bars.map(b => Number(b.low)).filter(isFinite);
+  return `${kind} chart (${tf}, ${bars.length} bars to ` +
+    `${String(last.bar_time).slice(0, 16)}): last close ${last.close}, ` +
+    `window hi ${Math.max(...highs)} lo ${Math.min(...lows)}`;
+}
+function planText(meta) {
+  const plan = lastView?.context?.[`plans/${meta.tradeKey.slice(7)}`];
+  if (!plan) return "plan: none";
+  const bits = [`plan: ${plan.status}`];
+  if (plan.market) bits.push(`market stop ${plan.market.stop ?? "—"} / ` +
+    `target ${plan.market.target ?? "—"}` +
+    (plan.market.buy != null ? ` / buy ${plan.market.buy}` : ""));
+  const state = Object.entries(plan.state || {})
+    .map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" ");
+  if (state) bits.push(`state ${state}`);
+  if (plan.last_error) bits.push(`ERROR ${plan.last_error}`);
+  if (plan.last_run) bits.push(`ran ${String(plan.last_run).slice(11, 19)}Z`);
+  return bits.join(" · ");
+}
+function overlaysText(meta) {
+  const lines = [];
+  for (const overlay of overlayEntries(meta)) {
+    const levels = (overlay.levels || [])
+      .map(l => `${l.label || ""} ${l.price}`).join(", ");
+    const clocks = (overlay.clocks || [])
+      .map(c => `${c.label || ""} at ${c.at}`).join(", ");
+    if (levels || clocks)
+      lines.push(`overlay ${overlay.key.split("/").pop()} ` +
+        `[${overlay.target || "contract"}]: ${levels}${clocks ? " · " + clocks : ""}`);
+  }
+  return lines.join("\n") || "overlays: none";
+}
+function cockpitBrief(meta, state) {
+  const trade = lastView?.context?.[meta.tradeKey] || {};
+  const fill = trade.fill || {};
+  const cells = Object.keys(lastView?.context || {})
+    .filter(key => key.startsWith(`cockpit/${meta.tradeKey.slice(7)}/`))
+    .map(key => `${key.split("/").pop()}: ` +
+      JSON.stringify(lastView.context[key]).slice(0, 200));
+  return [
+    `POSITION ${meta.label}: ${trade.state}` +
+      (fill.price ? `, ${fill.quantity} @ $${fill.price} ` +
+        `(${String(fill.observed_at).slice(0, 10)})` : ""),
+    planText(meta),
+    tapeText(meta),
+    paneBarsText(meta, "contract", state?.contract?.tf || "5m"),
+    paneBarsText(meta, "underlying", state?.underlying?.tf || "daily"),
+    overlaysText(meta),
+    ...cells,
+  ].join("\n").slice(0, 2600);
+}
+function paneFoldChip(title, textFn) {
+  const chip = el("button", {class: "focus-chip", type: "button",
+    title: "talk to an agent about exactly this view"});
+  chip.innerHTML = (window.Manifold && Manifold.mark) || "◈";
+  chip.addEventListener("click", event => {
+    event.stopPropagation();
+    openFocus(title, "data", {view: title, text: textFn()});
+  });
+  return chip;
+}
 function substituteMeta(node, meta) {
   if (Array.isArray(node)) return node.map(item => substituteMeta(item, meta));
   if (node && typeof node === "object") {
@@ -1667,11 +1765,11 @@ function libraryPlugins(pane) {
       && (value.appliesTo === pane || value.appliesTo === "both"))
     .map(([key, value]) => ({slug: key.slice(8), ...value}));
 }
-function libraryInstanceKey(meta, slug) {
-  return `overlays/${meta.tradeKey.slice(7)}-lib-${slug}`;
+function libraryInstanceKey(meta, slug, pane) {
+  return `overlays/${meta.tradeKey.slice(7)}-lib-${pane}-${slug}`;
 }
 async function toggleLibraryPlugin(meta, pane, plugin) {
-  const key = libraryInstanceKey(meta, plugin.slug);
+  const key = libraryInstanceKey(meta, plugin.slug, pane);
   const existing = lastView?.context?.[key];
   let value = null;
   if (!existing) {
@@ -1691,20 +1789,49 @@ async function toggleLibraryPlugin(meta, pane, plugin) {
   }
   renderChartModal();
 }
-function pluginLibraryChips(head, pane, meta) {
-  for (const plugin of libraryPlugins(pane)) {
-    const on = !!lastView?.context?.[libraryInstanceKey(meta, plugin.slug)];
-    const chip = el("button", {type: "button",
-      class: "plugin-chip" + (on ? " on" : ""),
-      title: plugin.describe || `library plugin — ${plugin.slug}`},
-      plugin.label || plugin.slug);
-    chip.addEventListener("click", () =>
-      toggleLibraryPlugin(meta, pane, plugin));
-    head.append(chip);
+// The plugin drawer: one tidy list per pane — built-ins, then the
+// library, then ＋ to design a new one. Timeframes stay as buttons;
+// everything analytic lives here, scalable to a long list.
+const openDrawers = new Set();
+function pluginDrawer(pane, meta, state) {
+  const holder = el("span", {class: "drawer-holder"});
+  const toggle = el("button", {type: "button", class: "plugin-chip",
+    title: "plugins for this chart"}, "plugins ▾");
+  const panel = el("div", {class: "plugin-panel"});
+  panel.hidden = !openDrawers.has(pane);
+  toggle.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    panel.hidden ? openDrawers.delete(pane) : openDrawers.add(pane);
+  });
+  const row = (label, on, describe, onToggle) => {
+    const line = el("label", {class: "plugin-row",
+      title: describe || ""});
+    const box = el("input", {type: "checkbox"});
+    box.checked = on;
+    box.addEventListener("change", onToggle);
+    line.append(box, el("span", {}, label));
+    return line;
+  };
+  if (state) {
+    for (const plugin of Object.values(CHART_PLUGINS)) {
+      if (plugin.appliesTo !== "both" && plugin.appliesTo !== pane) continue;
+      panel.append(row(plugin.label, state.plugins.has(plugin.id), "",
+        () => {
+          state.plugins.has(plugin.id)
+            ? state.plugins.delete(plugin.id)
+            : state.plugins.add(plugin.id);
+          renderChartModal();
+        }));
+    }
   }
-  const plus = el("button", {type: "button", class: "plugin-chip plus",
-    title: "design a new plugin for this chart — the agent builds it " +
-           "into the library"}, "＋");
+  for (const plugin of libraryPlugins(pane)) {
+    const on = !!lastView?.context?.[
+      libraryInstanceKey(meta, plugin.slug, pane)];
+    panel.append(row(plugin.label || plugin.slug, on,
+      plugin.describe, () => toggleLibraryPlugin(meta, pane, plugin)));
+  }
+  const plus = el("button", {type: "button", class: "plugin-chip plus"},
+    "＋ design a new plugin");
   plus.addEventListener("click", () => {
     const input = document.querySelector("#overlay-composer input");
     if (input) {
@@ -1713,7 +1840,9 @@ function pluginLibraryChips(head, pane, meta) {
       input.scrollIntoView({behavior: "smooth", block: "center"});
     }
   });
-  head.append(plus);
+  panel.append(plus);
+  holder.append(toggle, panel);
+  return holder;
 }
 function chartPane(kind, meta, state) {
   const pane = el("div", {class: "pane"});
@@ -1730,21 +1859,11 @@ function chartPane(kind, meta, state) {
     });
     head.append(chip);
   }
-  head.append(el("span", {class: "muted", style: "font-size:.72rem"}, "·"));
-  for (const plugin of Object.values(CHART_PLUGINS)) {
-    if (plugin.appliesTo !== "both" && plugin.appliesTo !== kind) continue;
-    const chip = el("button", {type: "button",
-      class: "plugin-chip" + (state.plugins.has(plugin.id) ? " on" : "")},
-      plugin.label);
-    chip.addEventListener("click", () => {
-      state.plugins.has(plugin.id)
-        ? state.plugins.delete(plugin.id)
-        : state.plugins.add(plugin.id);
-      renderChartModal();
-    });
-    head.append(chip);
-  }
-  pluginLibraryChips(head, kind, meta);
+  head.append(pluginDrawer(kind, meta, state));
+  head.append(paneFoldChip(
+    `cockpit ${meta.tradeKey.slice(7)} · ${kind} chart`,
+    () => [paneBarsText(meta, kind, state.tf), planText(meta),
+           overlaysText(meta)].join("\n")));
   pane.append(head);
   const chart = el("div", {class: "pane-chart"});
   pane.append(chart);
@@ -1801,6 +1920,7 @@ function cockpitStrip(meta) {
       (plan.last_run ? ` · ran ${String(plan.last_run).slice(11, 19)}Z` : "")));
     if (plan.last_error) beat.append(el("span", {class: "violation"},
       ` ⚠ ${plan.last_error}`));
+    beat.append(focusChip(`plans/${meta.tradeKey.slice(7)}`, plan));
     strip.append(beat);
   }
   // countdown clocks from overlays: data prints, earnings, deadlines
@@ -1873,7 +1993,9 @@ function renderChartModal() {
     const mount = el("div", {class: "pane", id: "overlay-composer"});
     Manifold.composer({
       mount, envId, token, scope: "overlay",
-      prelude: `About trades/${state.tradeKey.slice(7)}: build for ` +
+      prelude: "CURRENT COCKPIT (the member's live picture):\n" +
+        cockpitBrief(meta, state) +
+        `\n\nAbout trades/${state.tradeKey.slice(7)}: build for ` +
         "this trade's cockpit. Three surfaces: (1) overlays/" +
         state.tradeKey.slice(7) + "-<slug> = chart overlays {target: " +
         "contract|underlying, levels: [{price,label}], bands: " +
@@ -2724,7 +2846,9 @@ function tradeStats(key, spec, view) {
 function evidenceCell(key) {
   const value = lastView?.context?.[key];
   const cell = el("div", {class: "card"});
-  cell.append(el("h3", {}, key));
+  const cellHead = el("h3", {}, key);
+  cellHead.append(focusChip(key, value));
+  cell.append(cellHead);
   const chartKinds = ["line", "bar", "candle", "scatter", "ladder", "flow",
     "treemap", "relative_range", "connected_scatter", "streamgraph"];
   if (value == null) {
