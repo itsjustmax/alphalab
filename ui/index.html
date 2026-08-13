@@ -1455,6 +1455,94 @@ const CONTRACT_TFS = {"1m": ["1 min", "1 D"], "5m": ["5 mins", "2 D"],
 const UNDERLYING_TFS = {"hourly": ["1 hour", "10 D"],
                         "daily": ["1 day", "6 M"]};
 const INDEXES = new Set(["SPX", "XSP", "NDX", "VIX", "DJI", "RUT"]);
+// The tape: persisted ticks as their own chart — every tick the
+// stream prints lands in Timescale (source_pool.quote_ticks), and
+// this pane replays the freshest ~200 of them: bid/ask as a spread
+// band, last as the crawling line. Refreshes every 5s while open.
+const tapeMemory = {};
+function drawTape(holder, rows, label) {
+  if (!rows.length) return;
+  const ticks = [...rows].reverse();  // lane answers newest first
+  const w = 960, h = 150, pad = {l: 8, r: 52, t: 8, b: 18};
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const values = ticks.flatMap(t =>
+    [Number(t.bid), Number(t.ask), Number(t.last)]).filter(isFinite);
+  if (!values.length) return;
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const padY = (hi - lo) * 0.1 || 0.01;
+  const svg = d3.create("svg").attr("viewBox", `0 0 ${w} ${h}`);
+  const g = svg.append("g").attr("transform",
+    `translate(${pad.l},${pad.t})`);
+  const y = d3.scaleLinear().domain([lo - padY, hi + padY]).range([ih, 0]);
+  const x = index => index / Math.max(1, ticks.length - 1) * iw;
+  const path = field => ticks.map((t, i) => {
+    const v = Number(t[field]);
+    return isFinite(v) ? `${x(i).toFixed(1)},${y(v).toFixed(1)}` : null;
+  }).filter(Boolean).join(" ");
+  const bid = path("bid"), ask = path("ask");
+  if (bid && ask) {
+    g.append("polygon")
+      .attr("points", ask + " " + bid.split(" ").reverse().join(" "))
+      .attr("fill", "var(--accent)").attr("opacity", .08);
+    g.append("polyline").attr("points", bid).attr("fill", "none")
+      .attr("stroke", "var(--down)").attr("stroke-width", .8)
+      .attr("opacity", .7);
+    g.append("polyline").attr("points", ask).attr("fill", "none")
+      .attr("stroke", "var(--up)").attr("stroke-width", .8)
+      .attr("opacity", .7);
+  }
+  g.append("polyline").attr("points", path("last")).attr("fill", "none")
+    .attr("stroke", "var(--accent)").attr("stroke-width", 1.5);
+  const newest = ticks[ticks.length - 1];
+  g.append("circle").attr("cx", iw).attr("cy", y(Number(newest.last)))
+    .attr("r", 3).attr("fill", "var(--accent)");
+  const axis = g.append("g").attr("transform", `translate(${iw},0)`)
+    .call(d3.axisRight(y).ticks(4).tickSize(0));
+  axis.selectAll("text").attr("fill", "var(--muted)")
+    .attr("font-size", "10px");
+  axis.select(".domain").remove();
+  for (const [index, anchor] of [[0, "start"],
+                                 [ticks.length - 1, "end"]])
+    g.append("text").attr("x", x(index)).attr("y", ih + 12)
+      .attr("text-anchor", anchor).attr("fill", "var(--muted)")
+      .attr("font-size", "9px")
+      .text(String(ticks[index].quote_time).slice(11, 19));
+  holder.replaceChildren(svg.node());
+  holder.title = `${label} — ${ticks.length} persisted ticks, ` +
+    `spread band bid×ask, line = last`;
+}
+function tickPane(meta) {
+  const pane = el("div", {class: "pane"});
+  const head = el("div", {class: "pane-head"});
+  head.append(el("h4", {}, `${meta.label} — tape`));
+  head.append(el("span", {class: "muted", style: "font-size:.72rem"},
+    "every tick, persisted; ~last 200"));
+  pane.append(head);
+  const chart = el("div", {class: "pane-chart"});
+  pane.append(chart);
+  if (tapeMemory[meta.label])
+    drawTape(chart, tapeMemory[meta.label], meta.label);
+  else chart.textContent = "…";
+  const args = {...contractArgs(meta.label), action: "latest", limit: 200};
+  const crawl = async () => {
+    if (!chart.isConnected) return;
+    try {
+      const reply = await api("POST",
+        `/environments/${envId}/tools/market_stream`, {args});
+      const rows = reply.result?.data?.rows || [];
+      if (rows.length) {
+        tapeMemory[meta.label] = rows;
+        drawTape(chart, rows, meta.label);
+      } else if (!tapeMemory[meta.label]) {
+        chart.replaceChildren(el("p", {class: "muted"},
+          "no persisted ticks yet — the stream is warming"));
+      }
+    } catch { /* keep the last tape through blips */ }
+    setTimeout(crawl, 5000);
+  };
+  crawl();
+  return pane;
+}
 function chartPane(kind, meta, state) {
   const pane = el("div", {class: "pane"});
   const head = el("div", {class: "pane-head"});
@@ -1589,6 +1677,7 @@ function renderChartModal() {
   const body = document.getElementById("chart-modal-body");
   body.replaceChildren(
     cockpitStrip(meta),
+    tickPane(meta),
     chartPane("contract", meta, state.contract),
     chartPane("underlying", meta, state.underlying));
   // Cockpit cells: this trade's OWN micro-dashboard. Any entry at
@@ -1643,7 +1732,7 @@ function renderChartModal() {
 function openChartModal(tradeKey) {
   chartModalState.tradeKey = tradeKey;
   chartModalState.contract = chartModalState.contract
-    || {tf: "5m", plugins: new Set(["plan", "ticks"])};
+    || {tf: "5m", plugins: new Set(["plan"])};
   chartModalState.underlying = chartModalState.underlying
     || {tf: "daily", plugins: new Set(["zones"])};
   renderChartModal();
