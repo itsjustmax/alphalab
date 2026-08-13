@@ -618,3 +618,16 @@ def test_retired_trades_are_not_audited(tmp_path):
     pilot.audit(context, now)
     assert writes["desk/audit"]["clean"] is True
     assert writes["desk/audit"]["cases_checked"] == 1
+
+
+def test_retired_evidence_is_a_named_violation():
+    cases = {"trades/nvda": {"contracts": ["NVDA 20260821 235C"],
+                             "state": "watching",
+                             "evidence": ["widgets/gamma", "findings/f1"]},
+             "trades/done": {"state": "closed",
+                             "evidence": ["widgets/long-gone"]}}
+    context = {**cases, "widgets/gamma": {"kind": "metric"}}
+    found = autopilot.evidence_violations(cases, context)
+    assert list(found) == ["trades/nvda"]
+    assert "findings/f1" in found["trades/nvda"][0]
+    # closed trades are history; their evidence may retire freely

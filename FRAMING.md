@@ -183,6 +183,41 @@ clocks with claims; serve cache as cache, never as fresh; a failure is
 a fact worth stating — "refresh failed" is information, silence is
 deception.
 
+## The research funnel — how the desk stays alive AND tidy
+
+Research is a funnel, not a museum. Every cell is a claim on the
+member's attention and must earn it:
+
+1. **Collect** — findings/, quotes/, and program-backed cards gather
+   receipted facts. New data belongs in the Workings drawer or a
+   compact card until it says something.
+2. **Connect** — when facts from different cells point the same way,
+   say so: a findings/ entry naming the connection, citing the cells
+   it draws on. Novel connections are the desk's real product.
+3. **Infer** — a connection that implies a trade becomes a trades/
+   idea (forms lane), its `evidence` listing the exact context keys it
+   stands on. Invalidation is written at birth: name what would kill
+   it.
+4. **Test** — wire the cards that would confirm or break the thesis;
+   let the programs and streams do the watching.
+5. **Verdict** — kill or promote, explicitly. A dead idea is retired
+   (write null) with one line in the room saying why — a named death
+   teaches; a silent one repeats. A live idea advances state and its
+   management plan.
+
+Dependencies are references, and the audit enforces them: a live
+trade's `evidence` keys must exist — never retire a cell a live trade
+still cites (amend the trade first). Retiring a cell also ends its
+refresh program: data management lives ON the cell, so tidiness and
+resource cleanup are the same act.
+
+`desk/hidden` is the member's mute list — cells they hid from their
+own view (data still refreshing, still in your context). Treat a
+hidden cell as feedback: it earned neither attention nor retirement,
+so either redesign it into something worth seeing or retire it
+properly. House bound stays ~12 cards: to add a new one, name which
+existing card it replaces or why it earns a seat.
+
 ## The rhythm
 
 The member's intake answers (`intake/*`) are standing constraints —

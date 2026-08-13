@@ -1,13 +1,14 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
     "quotes/": "one key per symbol, canonical: {\"refresh\": {\"tool\": \"live_quote\", \"args\": {\"symbol\": \"NVDA\"}, \"minutes\": 1, \"value_path\": \"result.data.quote\", \"into\": \"quote\"}} — a standing reqMktData stream keeps it current; the desk renders entry.quote {bid, ask, last, observed_at} as a live chip. Use quote_snapshot only for one-off or slow-cadence reads.",
     "findings/": "one key per finding: {title, source, as_of} — evidence worth keeping; the desk renders the findings feed from these",
     "answers/": "the member's replies to ask cards, one key per card id — direction and risk decisions only; fills need no answers",
+    "desk/hidden": "cells the member hid from their own view (data keeps refreshing): {keys, as_of} — member-owned; treat as feedback per the research-funnel framing, never write it",
     "desk/streams": "the autopilot's watchlist stream health, refreshed each pass: {quotes: {SYMBOL: {last, observed_at, age_seconds} | null}, stale: [symbols], checked_at}. If a symbol goes stale or null the member SEES it and you can act: re-warm with live_quotes {warm: true}, or check capabilities/system_health for the broken lane. Never write this key.",
     "desk/name": "the member's own label for this desk, set in the desks menu — agents never write it",
     "desk/next_check": "the agent's own next check-in clock (ISO-8601 UTC, >=10 minutes out); the autopilot honors it",

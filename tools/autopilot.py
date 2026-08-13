@@ -297,6 +297,24 @@ def duplicate_contract_violations(cases):
     return violations
 
 
+def evidence_violations(cases, context):
+    """Dependencies are references: a live trade's evidence keys must
+    exist. Retiring a cell that a trade still cites breaks the trade's
+    provenance — the audit names it so the desk restores or amends."""
+
+    violations = {}
+    for key, trade in sorted((cases or {}).items()):
+        if not isinstance(trade, dict) or trade.get("state") == "closed":
+            continue
+        for cited in trade.get("evidence") or []:
+            value = (context or {}).get(str(cited))
+            if value is None:
+                violations.setdefault(key, []).append(
+                    f"evidence {cited!r} is gone from the desk — restore "
+                    f"it or amend this trade's evidence list")
+    return violations
+
+
 def audit_violations(cases, check):
     """The post-turn audit: run the case gate over every case.
 
@@ -411,10 +429,15 @@ class Pilot:
         # a null value is a retired entry, not a broken trade
         trades = {k: v for k, v in context.items()
                   if k.startswith("trades/") and v is not None}
-        fingerprint = json.dumps(trades, sort_keys=True, default=str)
+        evidence_keys = sorted(k for k, v in context.items()
+                               if v is not None)
+        fingerprint = json.dumps([trades, evidence_keys],
+                                 sort_keys=True, default=str)
         if fingerprint == self.state.get("audit_fingerprint"):
             return None
         violations = audit_violations(trades, self._check_trade)
+        for key, found in evidence_violations(trades, context).items():
+            violations.setdefault(key, []).extend(found)
         self.state["audit_fingerprint"] = fingerprint
         self._save()
         append_audit_ledger(self.environment, now, not violations,

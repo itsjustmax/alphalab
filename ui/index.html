@@ -107,6 +107,7 @@
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
   section { border: 1px solid var(--border); border-radius: 16px;
             padding: 1rem 1.1rem; background: var(--surface); }
+  h2 .desk-rename { margin-left: .6rem; vertical-align: middle; }
   h2 { font-size: .74rem; text-transform: uppercase; letter-spacing: .12em;
        color: var(--muted); margin: 0 0 .7rem; font-weight: 700; }
   h2::before { content: ""; display: inline-block; width: .55rem; height: .55rem;
@@ -1560,16 +1561,67 @@ function renderIntake(view) {
   });
 }
 
+// Hiding is the member's view, not the desk's data: a hidden cell
+// keeps its refresh program running and stays in agents' context —
+// only the rendering stops. The hidden list is also written to
+// desk/hidden as a SIGNAL: framing tells agents a cell the member hid
+// is a candidate to retire properly or redesign.
+function hiddenKeys() {
+  try {
+    return new Set(JSON.parse(
+      localStorage.getItem(`alphalab-hidden-${envId}`) || "[]"));
+  } catch { return new Set(); }
+}
+async function setHidden(keys) {
+  localStorage.setItem(`alphalab-hidden-${envId}`,
+    JSON.stringify([...keys].sort()));
+  try {
+    await api("POST", `/environments/${envId}/context`, {
+      key: "desk/hidden",
+      value: keys.size ? {keys: [...keys].sort(),
+        as_of: new Date().toISOString().slice(0, 19) + "+00:00"} : null});
+  } catch { /* the signal is best-effort; the local hide always works */ }
+  lastRendered = null;
+  if (lastView) render(lastView);
+}
+function hideChip(key) {
+  const chip = el("button", {class: "focus-chip", type: "button",
+    title: "hide this cell — its data keeps refreshing; restore from " +
+           "the hidden count in the section header"}, "✕");
+  chip.addEventListener("click", event => {
+    event.stopPropagation();
+    const keys = hiddenKeys();
+    keys.add(key);
+    setHidden(keys);
+  });
+  return chip;
+}
+
 function renderWidgets(view) {
   const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "AlphaLab"));
-  const deck = el("div", {id: "deck"});
+  const heading = el("h2", {}, "AlphaLab");
+  const hidden = hiddenKeys();
   const cards = Object.entries(view.context)
     .filter(([key, value]) => key.startsWith("widgets/") && value)
     .sort(([, a], [, b]) => (b.pinned === true) - (a.pinned === true));
+  const hiddenHere = cards.filter(([key]) => hidden.has(key));
+  if (hiddenHere.length) {
+    const restore = el("button", {type: "button", class: "desk-rename",
+      title: "click to show them again"},
+      `${hiddenHere.length} hidden`);
+    restore.addEventListener("click", () => {
+      const keys = hiddenKeys();
+      for (const [key] of hiddenHere) keys.delete(key);
+      setHidden(keys);
+    });
+    heading.append(restore);
+  }
+  section.append(heading);
+  const deck = el("div", {id: "deck"});
   if (!cards.length) deck.append(el("span", {class: "muted"},
     "No cards yet — any member can put one up."));
   for (const [key, spec] of cards) {
+    if (hidden.has(key)) continue;
     const card = el("div", {class: "card"});
     if (spec.pinned === true) card.classList.add("pinned");
     if (["compact", "wide", "full"].includes(spec.size)) card.classList.add(spec.size);
@@ -1577,6 +1629,7 @@ function renderWidgets(view) {
     cardHead.append(el("h3", {}, spec.title || key.slice(8)));
     cardHead.append(focusChip(key, spec));
     cardHead.append(focusChip(key, spec, "structure"));
+    cardHead.append(hideChip(key));
     card.append(cardHead);
     if (spec.kind === "metric") {
       card.append(el("div", {class: "metric"}, String(spec.value ?? "—")));
