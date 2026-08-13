@@ -648,8 +648,8 @@ class Pilot:
                           f"{str(error)[:120]}", flush=True)
             trade = (context or {}).get(f"trades/{trade_id}")
             if not isinstance(trade, dict) \
-                    or trade.get("state") != "open-simulated":
-                continue
+                    or trade.get("state") == "closed":
+                continue  # plans watch entries too; only closed retires
             program = plan.get("program") or {}
             if plans.program_violations(program):
                 continue  # named by plan_check; a broken program never runs
@@ -731,6 +731,37 @@ class Pilot:
                           {"key": card_key, "value": None})
                 print(f"[{utc_now():%H:%M:%S}] plan {trade_id}: "
                       "exit order cancelled", flush=True)
+            return
+        if kind == "arm_entry":
+            if trade.get("state") not in ("idea", "watching"):
+                return  # entries arm only before a fill exists
+            entry_key = f"widgets/fill-{trade_id}"
+            entry_price = round(float(action["price"]), 2)
+            working = ((context.get(entry_key) or {})
+                       .get("refresh") or {}).get("args") or {}
+            if working.get("price") == entry_price \
+                    and working.get("action", "buy") == "buy":
+                return  # the desired entry is already working
+            quantity = int(action.get("quantity") or 1)
+            card = {"kind": "order",
+                    "title": f"Plan entry — {label}",
+                    "plan": f"plans/{trade_id}",
+                    "refresh": {"tool": "fill_watch",
+                                "args": {**parse_contract_label(label),
+                                         "price": entry_price,
+                                         "quantity": max(1, min(quantity, 100)),
+                                         "action": "buy",
+                                         "contract": label},
+                                "minutes": 2, "value_path": "result.data",
+                                "into": "check"}}
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": entry_key, "value": card})
+            self._api("POST", f"/environments/{self.environment}/say",
+                      {"text": f"[plan {trade_id}] entry armed at "
+                               f"${entry_price:g} — the gate watches "
+                               f"from here"})
+            print(f"[{utc_now():%H:%M:%S}] plan {trade_id}: entry armed "
+                  f"@ ${entry_price:g}", flush=True)
             return
         # close = a marketable sell: a 0.01 limit executes AT the bid
         # through the same gate as every fill; place_exit rests a limit.

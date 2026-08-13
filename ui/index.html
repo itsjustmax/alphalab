@@ -261,6 +261,13 @@
   .tf-chip.on, .plugin-chip.on { color: var(--text);
     border-color: var(--accent); }
   .pane-chart { margin-top: .5rem; min-height: 120px; }
+  .cockpit { display: flex; gap: 1rem; flex-wrap: wrap;
+    align-items: center; margin-top: .6rem; padding: .5rem .7rem;
+    background: var(--surface-2); border-radius: 10px;
+    font-size: .8rem; }
+  .cockpit-item.clock b { color: var(--warn); }
+  .cockpit .countdown { font-family: var(--mono); }
+  #overlay-composer { max-width: 640px; }
   .pane-chart svg { display: block; width: 100%; height: auto; }
   .spark-cell { cursor: pointer; }
   .spark-cell:hover { opacity: .85; }
@@ -1280,35 +1287,84 @@ function levelLine(ctx, price, color, text) {
     .attr("text-anchor", "end").attr("fill", color)
     .attr("font-size", "10px").text(text);
 }
+function zoneBands(ctx, timeframe, opacity) {
+  toolData("symbol_zones", {symbol: ctx.meta.symbol,
+    timeframe}, timeframe === "daily" ? 60 : 15).then(receipt => {
+    for (const zone of normalizeZones(receipt?.data?.rows)) {
+      const top = Math.max(0, Math.min(ctx.h, ctx.y(zone.upper)));
+      const bottom = Math.max(0, Math.min(ctx.h, ctx.y(zone.lower)));
+      if (bottom - top < 1) continue;
+      ctx.g.insert("rect", ":first-child")
+        .attr("x", 0).attr("width", ctx.w)
+        .attr("y", top).attr("height", bottom - top)
+        .attr("fill", zone.zone_type === "supply"
+          ? "var(--down)" : "var(--up)")
+        .attr("opacity", opacity);
+    }
+  });
+}
+// Agent-built plugins are DATA, not code: overlays/<trade-id>-<slug>
+// entries carry {target: "contract"|"underlying", levels: [{price,
+// label}], bands: [{lower, upper, label, side}], clocks: [{at, label}]}
+// and this one plugin renders them all. An agent "builds a plugin" by
+// writing an atomic entry — auditable, retirable, no code eval.
+function overlayEntries(meta) {
+  return Object.entries(lastView?.context || {})
+    .filter(([key, value]) => value
+      && key.startsWith(`overlays/${meta.tradeKey.slice(7)}`))
+    .map(([key, value]) => ({key, ...value}));
+}
 const CHART_PLUGINS = {
   sma20: {id: "sma20", label: "SMA 20", appliesTo: "both",
     draw: ctx => linePlugin(smaSeries(ctx.bars, 20), ctx, "#8b7cf6")},
   ema9: {id: "ema9", label: "EMA 9", appliesTo: "both",
     draw: ctx => linePlugin(emaSeries(ctx.bars, 9), ctx, "#f5a524")},
   plan: {id: "plan", label: "plan", appliesTo: "contract",
-    levels: ctx => [ctx.meta.entry, ctx.meta.exitLimit].filter(isFinite),
+    levels: ctx => [ctx.meta.entry, ctx.meta.exitLimit,
+      ...Object.values(ctx.meta.plan?.state || {})
+        .filter(v => typeof v === "number")].filter(isFinite),
     draw: ctx => {
       levelLine(ctx, ctx.meta.entry, "var(--muted)",
         `entry ${ctx.meta.entry}`);
       levelLine(ctx, ctx.meta.exitLimit, "var(--up)",
         `exit ${ctx.meta.exitLimit}`);
+      // The plan's LIVE state: every numeric field the program keeps
+      // (stop, high, ratchet level…) draws as a labeled line — watch
+      // the trail move as the runner updates state.
+      for (const [name, value] of
+           Object.entries(ctx.meta.plan?.state || {})) {
+        if (typeof value === "number" && isFinite(value))
+          levelLine(ctx, value, "var(--warn)", `${name} ${value}`);
+      }
     }},
-  zones: {id: "zones", label: "zones", appliesTo: "underlying",
+  zonesDaily: {id: "zonesDaily", label: "zones D", appliesTo: "underlying",
+    draw: ctx => zoneBands(ctx, "daily", .10)},
+  zonesHourly: {id: "zonesHourly", label: "zones H", appliesTo: "underlying",
+    draw: ctx => zoneBands(ctx, "hourly", .16)},
+  overlays: {id: "overlays", label: "custom", appliesTo: "both",
+    levels: ctx => overlayEntries(ctx.meta)
+      .filter(o => (o.target || "contract") === ctx.meta.pane)
+      .flatMap(o => [...(o.levels || []).map(l => Number(l.price)),
+        ...(o.bands || []).flatMap(b => [Number(b.lower), Number(b.upper)])])
+      .filter(isFinite),
     draw: ctx => {
-      toolData("symbol_zones", {symbol: ctx.meta.symbol,
-        timeframe: "daily"}, 60).then(receipt => {
-        for (const zone of normalizeZones(receipt?.data?.rows)) {
-          const top = Math.max(0, Math.min(ctx.h, ctx.y(zone.upper)));
-          const bottom = Math.max(0, Math.min(ctx.h, ctx.y(zone.lower)));
+      for (const overlay of overlayEntries(ctx.meta)) {
+        if ((overlay.target || "contract") !== ctx.meta.pane) continue;
+        for (const band of overlay.bands || []) {
+          const top = Math.max(0, Math.min(ctx.h, ctx.y(Number(band.upper))));
+          const bottom = Math.max(0, Math.min(ctx.h, ctx.y(Number(band.lower))));
           if (bottom - top < 1) continue;
           ctx.g.insert("rect", ":first-child")
             .attr("x", 0).attr("width", ctx.w)
             .attr("y", top).attr("height", bottom - top)
-            .attr("fill", zone.zone_type === "supply"
-              ? "var(--down)" : "var(--up)")
-            .attr("opacity", .10);
+            .attr("fill", /supply|resist/.test(String(band.side || ""))
+              ? "var(--down)" : "var(--accent)")
+            .attr("opacity", .12);
         }
-      });
+        for (const level of overlay.levels || [])
+          levelLine(ctx, Number(level.price), "var(--accent)",
+            String(level.label || level.price));
+      }
     }},
 };
 function advancedCandles(holder, bars, {plugins = [], meta = {}} = {}) {
@@ -1413,7 +1469,7 @@ function chartPane(kind, meta, state) {
     : {symbol: meta.symbol,
        sec_type: INDEXES.has(meta.symbol) ? "IND" : "STK",
        duration, bar_size: barSize, return_limit: 200};
-  toolData("contract_bars", args, 5).then(receipt => {
+  toolData("contract_bars", args, 1).then(receipt => {
     const bars = (receipt?.ok
       && (receipt.data?.rows || receipt.data?.bars)) || [];
     if (!bars.length) {
@@ -1424,10 +1480,60 @@ function chartPane(kind, meta, state) {
     advancedCandles(chart, bars, {
       plugins: [...state.plugins].map(id => CHART_PLUGINS[id])
         .filter(Boolean),
-      meta});
+      meta: {...meta, pane: kind}});
   });
   return pane;
 }
+function countdownText(at) {
+  const target = Date.parse(at);
+  if (isNaN(target)) return String(at);
+  const seconds = Math.round((target - Date.now()) / 1000);
+  if (seconds <= 0) return "now";
+  const h = Math.floor(seconds / 3600), m = Math.floor(seconds % 3600 / 60);
+  return h > 48 ? `${Math.floor(h / 24)}d ${h % 24}h`
+    : h ? `${h}h ${m}m` : `${m}m ${seconds % 60}s`;
+}
+function cockpitStrip(meta) {
+  const strip = el("div", {class: "cockpit"});
+  const plan = meta.plan;
+  if (plan) {
+    const beat = el("div", {class: "cockpit-item"});
+    beat.append(el("span", {class: `state s-plan-${plan.status}`},
+      plan.status));
+    const stateText = Object.entries(plan.state || {})
+      .map(([k, v]) => `${k}=${typeof v === "number" ? v : JSON.stringify(v)}`)
+      .join(" · ");
+    beat.append(el("span", {class: "muted"},
+      ` ${stateText || "no program state yet"}` +
+      (plan.last_run ? ` · ran ${String(plan.last_run).slice(11, 19)}Z` : "")));
+    if (plan.last_error) beat.append(el("span", {class: "violation"},
+      ` ⚠ ${plan.last_error}`));
+    strip.append(beat);
+  }
+  // countdown clocks from overlays: data prints, earnings, deadlines
+  for (const overlay of overlayEntries(meta)) {
+    for (const clock of overlay.clocks || []) {
+      const item = el("div", {class: "cockpit-item clock"});
+      item.append(el("b", {}, String(clock.label || "T")));
+      const remaining = el("span", {class: "countdown",
+        "data-at": clock.at}, ` ${countdownText(clock.at)}`);
+      item.append(remaining);
+      strip.append(item);
+    }
+  }
+  // the latest plan narration — watch the runner react
+  const lastNote = [...(lastView?.conversation || [])].reverse().find(
+    item => String(item.text || "").startsWith(
+      `[plan ${meta.tradeKey.slice(7)}]`));
+  if (lastNote) strip.append(el("div", {class: "cockpit-item muted"},
+    lastNote.text.slice(0, 140)));
+  return strip;
+}
+setInterval(() => {
+  for (const node of document.querySelectorAll(".countdown"))
+    node.textContent = ` ${countdownText(node.dataset.at)}`;
+}, 1000);
+let chartModalTimer = null;
 function renderChartModal() {
   const state = chartModalState;
   if (!state.tradeKey) return;
@@ -1447,12 +1553,38 @@ function renderChartModal() {
     plan: lastView?.context?.[`plans/${state.tradeKey.slice(7)}`],
   };
   document.getElementById("chart-modal-title").textContent =
-    `${label} — advanced chart`;
+    `${label} — trade cockpit`;
   const body = document.getElementById("chart-modal-body");
   body.replaceChildren(
+    cockpitStrip(meta),
     chartPane("contract", meta, state.contract),
     chartPane("underlying", meta, state.underlying));
+  // the builder: commission a new overlay in plain words — the agent
+  // writes overlays/<id> data entries; the custom plugin renders them
+  composerReady.then(() => {
+    if (document.getElementById("chart-modal").hidden) return;
+    const mount = el("div", {class: "pane", id: "overlay-composer"});
+    Manifold.composer({
+      mount, envId, token, scope: "overlay",
+      prelude: `About trades/${state.tradeKey.slice(7)}: design a chart ` +
+        "overlay. Write overlays/" + state.tradeKey.slice(7) +
+        "-<slug> entries shaped {target: contract|underlying, levels: " +
+        "[{price, label}], bands: [{lower, upper, label, side}], " +
+        "clocks: [{at, label}]} — pure data; the cockpit renders it " +
+        "under the 'custom' plugin. Cite your sources in a findings/ " +
+        "entry if the overlay makes a claim. Member says: ",
+      placeholder: "build an overlay — “mark the 5m zone on the contract " +
+        "and the hourly zone it must break”, “countdown to CPI”…",
+    });
+    body.append(mount);
+  }).catch(() => {});
   document.getElementById("chart-modal").hidden = false;
+  // live: repaint while open — fresh bars (1m ttl), live plan state,
+  // ticking countdowns; the member watches the plan execute
+  clearTimeout(chartModalTimer);
+  chartModalTimer = setTimeout(() => {
+    if (!document.getElementById("chart-modal").hidden) renderChartModal();
+  }, 30_000);
 }
 function openChartModal(tradeKey) {
   chartModalState.tradeKey = tradeKey;
@@ -1463,7 +1595,10 @@ function openChartModal(tradeKey) {
   renderChartModal();
 }
 document.getElementById("chart-modal-close").addEventListener("click",
-  () => document.getElementById("chart-modal").hidden = true);
+  () => {
+    document.getElementById("chart-modal").hidden = true;
+    clearTimeout(chartModalTimer);
+  });
 document.getElementById("chart-modal").addEventListener("click", event => {
   if (event.target.id === "chart-modal")
     document.getElementById("chart-modal").hidden = true;

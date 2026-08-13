@@ -185,6 +185,23 @@ who reads your work in an inspection modal before anything runs:
   firing case, the holding case, and any ratchet with
   `expect_state_contains`. A plan whose tests fail cannot be activated.
 
+Plans catch entries too: `arm_entry` (price, quantity?) places a
+standing entry order on a trade still in idea/watching — the plan is
+the watcher the entry condition needs, and active plans run on every
+non-closed trade. A trade is becoming the execution of a plan, not one
+open and close; re-opening cycles are a coming extension designed with
+the member — do not improvise them.
+
+**Chart overlays are data, not code.** The member's trade cockpit
+(click a position's sparkline) renders `overlays/<trade-id>-<slug>`
+entries under its "custom" plugin: {target: "contract"|"underlying",
+levels: [{price, label}], bands: [{lower, upper, label, side}],
+clocks: [{at, label}]} — key levels, zone-break setups, countdowns to
+data prints or earnings. When the member commissions an overlay (the
+cockpit's composer), write the entry with exact prices and honest
+clocks, and cite sources in findings/ if the overlay makes a claim.
+Retire overlays when their moment passes.
+
 Before writing a program, browse `plan_library` — every plan the
 member has activated on this machine is saved there, and closed ones
 carry their judged outcome (entry, exit, PnL). A proven pattern beats a

@@ -20,7 +20,9 @@ The decision function is pure: it sees the gathered inputs plus
 ``position`` and ``now``, keeps its own ``state`` (watermarks, ratchet
 levels), and may only answer bounded actions — close (a marketable exit
 through the same market gate as everything else), place_exit (a resting
-limit), cancel_exit, note. It cannot reach the network, the filesystem,
+limit), cancel_exit, arm_entry (a standing entry order for a trade not
+yet filled — plans catch entries, not only manage exits), note. It
+cannot reach the network, the filesystem,
 or the broker: the desk gathers, the program decides, the gate executes.
 
 Inspection is the contract: plan_check runs the program's own tests and
@@ -35,7 +37,8 @@ READ_ONLY_TOOLS = {
     "quote_snapshot", "spx_gamma", "market_context", "options_chain",
 }
 
-ALLOWED_ACTIONS = {"close", "place_exit", "cancel_exit", "note"}
+ALLOWED_ACTIONS = {"close", "place_exit", "cancel_exit", "arm_entry",
+                   "note"}
 
 SAFE_BUILTINS = {
     "abs": abs, "min": min, "max": max, "round": round, "len": len,
@@ -114,13 +117,13 @@ def run_decision(code, inputs, state):
                 or action.get("action") not in ALLOWED_ACTIONS:
             return None, (f"unknown action {action!r} — the vocabulary is "
                           + ", ".join(sorted(ALLOWED_ACTIONS)))
-        if action["action"] == "place_exit":
+        if action["action"] in ("place_exit", "arm_entry"):
             try:
                 price = float(action.get("price"))
             except (TypeError, ValueError):
-                return None, "place_exit carries a numeric price"
+                return None, f"{action['action']} carries a numeric price"
             if not price >= 0:
-                return None, "place_exit price is non-negative"
+                return None, f"{action['action']} price is non-negative"
         if action["action"] == "note" and not str(action.get("text") or "").strip():
             return None, "a note carries text"
     new_state = result.get("state") or {}

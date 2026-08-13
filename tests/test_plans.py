@@ -478,3 +478,42 @@ class ContractParsing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+ENTRY_PLAN = """
+def manage(inputs, state):
+    quote = inputs['mark']['quote']
+    if quote['ask'] is not None and quote['ask'] <= 4.0:
+        return {'actions': [{'action': 'arm_entry', 'price': 4.0}],
+                'state': state}
+    return {'actions': [], 'state': state}
+"""
+
+
+def test_plans_can_arm_entries_on_unfilled_trades():
+    context = {
+        "trades/amd": {"contracts": ["AMD 20260821 530C"],
+                       "thesis": "gamma", "invalidation": "fade",
+                       "state": "idea"},
+        "plans/amd": {"plan": "enter if ask <= 4", "status": "active",
+                      "archived_at": "x", "program": _program(ENTRY_PLAN)},
+    }
+    pilot = _pilot(context, {"live_quote":
+                             {"quote": {"bid": 3.9, "ask": 3.95}}})
+    ran = pilot.manage_plans(context, NOW)
+    assert ran == 1
+    card = context.get("widgets/fill-amd")
+    assert card, "arm_entry places a standing entry order"
+    args = card["refresh"]["args"]
+    assert args["action"] == "buy" and args["price"] == 4.0
+    assert args["strike"] == 530.0
+    assert any("entry armed" in text for text in pilot.said)
+
+
+def test_arm_entry_never_fires_on_an_open_position():
+    context = _live_context()  # open-simulated
+    context["plans/nvda"]["program"] = _program(ENTRY_PLAN)
+    pilot = _pilot(context, {"live_quote":
+                             {"quote": {"bid": 3.9, "ask": 3.9}}})
+    pilot.manage_plans(context, NOW)
+    assert "widgets/fill-nvda" not in context
