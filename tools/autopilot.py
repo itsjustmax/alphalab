@@ -798,6 +798,10 @@ class Pilot:
                         f"/environments/{self.environment}"
                         f"/tools/market_stream",
                         {"args": {**request, "action": "stop"}})
+                    # stop is asynchronous ("stop requested") — start
+                    # too soon and the phantom still answers "already
+                    # active" with no live worker underneath
+                    time.sleep(2)
                     self._api(
                         "POST",
                         f"/environments/{self.environment}"
