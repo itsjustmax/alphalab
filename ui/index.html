@@ -364,6 +364,13 @@
     border-radius: 4px; padding: 1px 6px; font-family: ui-monospace, monospace; }
   .receipt-link { cursor: pointer; text-decoration: underline dotted; }
   .working-bubble { opacity: .75; font-style: italic; }
+  .rule-edit { width: 100%; font: inherit; font-size: .85rem;
+    background: transparent; color: inherit; border: 1px solid
+    var(--line, #4443); border-radius: 6px; padding: 6px 8px;
+    margin: 2px 0 4px; }
+  .rule-slug { font: inherit; font-size: .85rem; background: transparent;
+    color: inherit; border: 1px solid var(--line, #4443);
+    border-radius: 6px; padding: 4px 8px; margin-bottom: 4px; }
   .desk-msg { border-left: 2px solid var(--accent, #6a9fb5);
     padding-left: 8px; }
   .desk-msg > b { color: var(--accent, #6a9fb5); }
@@ -399,6 +406,8 @@
     <span id="live-switch">
       <button id="live-pill" type="button" title="live trading controls">live: …</button>
     </span>
+    <button id="rules-link" type="button"
+      title="house rules — this desk's standing amendments to how its agents behave">rules</button>
     <span id="desk-switch">
       <button id="desks-link" type="button"
         title="this harness's desks — switch, or open a fresh one">desks ▾</button>
@@ -2617,6 +2626,64 @@ async function setPlanStatus(id, status) {
   document.getElementById("trade-modal").hidden = true;
   refresh();
 }
+
+// House rules: this desk's own standing amendments to the harness
+// framing — framing/<slug> entries, member-owned, read by every agent
+// turn. THE lever for "this desk should behave differently".
+function openRulesModal() {
+  document.getElementById("trade-modal-title").textContent =
+    "house rules — this desk only";
+  const body = document.getElementById("trade-modal-body");
+  body.replaceChildren();
+  body.append(el("p", {class: "muted"},
+    "Standing rules the desk's agents read on every turn, after the " +
+    "harness framing — where they conflict, your rule wins. These " +
+    "belong to THIS desk alone; other desks keep their own."));
+  const entries = Object.entries(lastView?.context || {})
+    .filter(([key, value]) => key.startsWith("framing/") && value)
+    .sort(([a], [b]) => a.localeCompare(b));
+  const save = (key, textarea) => {
+    const cleaned = textarea.value.trim();
+    api("POST", `/environments/${envId}/context`,
+      {key, value: cleaned || null}).then(refresh);
+  };
+  for (const [key, value] of entries) {
+    body.append(el("div", {class: "section-label"}, key.slice(8)));
+    const textarea = el("textarea", {class: "rule-edit", rows: "3"});
+    textarea.value = typeof value === "object" ? (value.text || "") : String(value);
+    const buttons = el("div", {class: "plan-buttons"});
+    const keep = el("button", {type: "button", class: "desk-rename"}, "save");
+    keep.addEventListener("click", () => save(key, textarea));
+    const drop = el("button", {type: "button", class: "desk-rename"}, "retire");
+    drop.addEventListener("click", () =>
+      api("POST", `/environments/${envId}/context`,
+        {key, value: null}).then(() => { openRulesModal(); refresh(); }));
+    buttons.append(keep, drop);
+    body.append(textarea, buttons);
+  }
+  if (!entries.length) body.append(el("p", {class: "muted"},
+    "no house rules yet — this desk runs on the shipped framing alone"));
+  body.append(el("div", {class: "section-label"}, "new rule"));
+  const slug = el("input", {type: "text", class: "rule-slug",
+    placeholder: "short-name (e.g. sizing, tone, no-tech)"});
+  const fresh = el("textarea", {class: "rule-edit", rows: "3",
+    placeholder: "Plain words. \"Never risk more than $50 a trade on " +
+      "this desk.\" \"Prefer weekly expirations.\" \"Answer in one " +
+      "sentence.\""});
+  const add = el("button", {type: "button", class: "desk-rename"}, "add rule");
+  add.addEventListener("click", () => {
+    const name = slug.value.trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    if (!name || !fresh.value.trim()) return;
+    api("POST", `/environments/${envId}/context`,
+      {key: `framing/${name}`, value: fresh.value.trim()})
+      .then(() => { openRulesModal(); refresh(); });
+  });
+  body.append(slug, fresh, el("div", {class: "plan-buttons"}, add));
+  document.getElementById("trade-modal").hidden = false;
+}
+document.getElementById("rules-link")
+  .addEventListener("click", openRulesModal);
 
 function openPlanModal(id) {
   const plan = lastView?.context?.[`plans/${id}`] || {};
