@@ -75,12 +75,152 @@ def tick_key(row):
             row.get("last"))
 
 
+def _env_file_path():
+    raw = os.environ.get("ALPHALAB_HOME", "").strip()
+    return Path(raw) / "config" / "alphalab.env" if raw else None
+
+
+def _master_switch_state():
+    path = _env_file_path()
+    try:
+        for line in path.read_text().splitlines():
+            if line.strip().startswith("ALPHALAB_LIVE_OPTION_ORDERS_ENABLED="):
+                return line.split("=", 1)[1].strip() in ("1", "true", "yes")
+    except (OSError, AttributeError):
+        pass
+    return False
+
+
+def _set_master_switch(on):
+    path = _env_file_path()
+    if path is None:
+        raise RuntimeError("no ALPHALAB_HOME")
+    lines = [l for l in path.read_text().splitlines()
+             if not l.strip().startswith(
+                 "ALPHALAB_LIVE_OPTION_ORDERS_ENABLED=")]
+    if on:
+        lines.append("ALPHALAB_LIVE_OPTION_ORDERS_ENABLED=1")
+    path.write_text("\n".join(lines) + "\n")
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def _reply(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authorized(self, query):
+        expected = _service_token()
+        return bool(expected) and query.get("token") == expected
+
+    def do_POST(self):
+        # The member's control surface: every route needs the service
+        # token AND a typed confirmation; every action is journaled.
+        # The kill switch alone takes no confirmation — safety is
+        # always one click.
+        parsed = urllib.parse.urlparse(self.path)
+        query = {k: v[0] for k, v in
+                 urllib.parse.parse_qs(parsed.query).items()}
+        if not self._authorized(query):
+            return self._reply(401, {"error": "bad token"})
+        risk_mod = _harness_risk()
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._reply(400, {"error": "bad body"})
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc).isoformat(
+            timespec="seconds")
+
+        def journal(action, detail):
+            risk_mod.journal_append({"at": now, "kind": "control",
+                                     "action": action, "detail": detail})
+
+        if parsed.path == "/live/kill":
+            standing = risk_mod.load_risk()
+            standing["kill"] = True
+            standing["live_enabled"] = False
+            with open(risk_mod.RISK_PATH, "w", encoding="utf-8") as h:
+                json.dump(standing, h, indent=1)
+            journal("kill", "member pressed the kill switch")
+            return self._reply(200, {"ok": True, "killed": True})
+        if parsed.path == "/live/enable":
+            if body.get("confirm") != "GO-LIVE":
+                return self._reply(400,
+                    {"error": "type GO-LIVE to confirm"})
+            standing = risk_mod.load_risk()
+            standing["live_enabled"] = bool(body.get("on"))
+            if standing["live_enabled"]:
+                standing["kill"] = False
+            with open(risk_mod.RISK_PATH, "w", encoding="utf-8") as h:
+                json.dump(standing, h, indent=1)
+            journal("enable", f"live_enabled={standing['live_enabled']}")
+            return self._reply(200, {"ok": True,
+                "live_enabled": standing["live_enabled"]})
+        if parsed.path == "/live/master":
+            if body.get("confirm") != "GO-LIVE":
+                return self._reply(400,
+                    {"error": "type GO-LIVE to confirm"})
+            _set_master_switch(bool(body.get("on")))
+            journal("master", f"engine master switch on={body.get('on')}")
+            return self._reply(200, {"ok": True,
+                "master": _master_switch_state()})
+        if parsed.path == "/live/arm":
+            trade_id = str(body.get("trade_id") or "").strip()
+            if not trade_id or body.get("confirm") != trade_id:
+                return self._reply(400,
+                    {"error": "type the trade id to confirm arming"})
+            armed = risk_mod.load_armed()
+            if body.get("disarm"):
+                armed.pop(trade_id, None)
+                journal("disarm", trade_id)
+            else:
+                cap = float(body.get("max_debit")
+                            or risk_mod.load_risk()
+                            .get("max_debit_per_order") or 0)
+                armed[trade_id] = {"armed_at": now, "max_debit": cap}
+                journal("arm", f"{trade_id} max_debit={cap}")
+            os.makedirs(os.path.dirname(risk_mod.ARMED_PATH),
+                        exist_ok=True)
+            with open(risk_mod.ARMED_PATH, "w", encoding="utf-8") as h:
+                json.dump(armed, h, indent=1)
+            return self._reply(200, {"ok": True, "armed": armed})
+        return self._reply(404, {"error": "no such control"})
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/live/status":
+            query = {k: v[0] for k, v in
+                     urllib.parse.parse_qs(parsed.query).items()}
+            if not self._authorized(query):
+                return self._reply(401, {"error": "bad token"})
+            risk_mod = _harness_risk()
+            standing = risk_mod.load_risk()
+            return self._reply(200, {
+                "live_enabled": standing.get("live_enabled"),
+                "kill": standing.get("kill"),
+                "account": standing.get("account"),
+                "whitelist": standing.get("symbol_whitelist"),
+                "master": _master_switch_state(),
+                "armed": risk_mod.load_armed()})
         if parsed.path != "/tape":
             self.send_response(404)
             self.end_headers()

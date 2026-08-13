@@ -43,6 +43,29 @@
   #desk-name input { background: var(--surface-2); color: var(--text);
     border: 1px solid var(--accent); border-radius: 6px; font: inherit;
     padding: .1rem .4rem; width: 14rem; }
+  #live-switch { position: relative; }
+  #live-pill { font-size: .78rem; border-radius: 8px; cursor: pointer;
+    font-family: inherit; padding: .3rem .6rem;
+    background: none; border: 1px solid var(--border); color: var(--muted); }
+  #live-pill.off { border-color: var(--border); }
+  #live-pill.on { border-color: var(--up); color: var(--up); }
+  #live-pill.killed { border-color: var(--down); color: var(--down); }
+  #live-panel { position: absolute; right: 0; top: 2.2rem; z-index: 80;
+    width: 300px; background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(0,0,0,.5); padding: .7rem;
+    display: flex; flex-direction: column; gap: .5rem; font-size: .8rem; }
+  #live-panel .lp-row { display: flex; align-items: center; gap: .5rem;
+    justify-content: space-between; }
+  #live-panel input { background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px;
+    padding: .3rem .5rem; font: inherit; font-size: .76rem; width: 7.5rem; }
+  #live-panel button { background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border-strong); border-radius: 7px;
+    font: inherit; font-size: .76rem; padding: .3rem .6rem; cursor: pointer; }
+  #live-panel button.danger { border-color: var(--down); color: var(--down);
+    font-weight: 700; }
+  #live-panel .muted { font-size: .72rem; }
   #desk-switch { position: relative; }
   #desks-link { color: var(--muted); font-size: .78rem;
     background: none; cursor: pointer; font-family: inherit;
@@ -289,6 +312,13 @@
     font-size: .8rem; }
   .cockpit-item.clock b { color: var(--warn); }
   .cockpit .countdown { font-family: var(--mono); }
+  .cockpit .desk-rename.armed { border-color: var(--up);
+    color: var(--up); font-weight: 700; }
+  .arm-inline { display: inline-flex; gap: .3rem; }
+  .arm-inline input { width: 9rem; background: var(--surface);
+    color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font: inherit; font-size: .72rem;
+    padding: .2rem .4rem; }
   #overlay-composer { max-width: 640px; }
   .pane-chart svg { display: block; width: 100%; height: auto; }
   .spark-cell { cursor: pointer; }
@@ -339,6 +369,10 @@
   <h1 id="title">…</h1>
   <span id="desk-name"></span>
   <span class="controls">
+    <span id="live-switch">
+      <button id="live-pill" type="button" title="live trading controls">live: …</button>
+      <div id="live-panel" hidden></div>
+    </span>
     <span id="desk-switch">
       <button id="desks-link" type="button"
         title="this harness's desks — switch, or open a fresh one">desks ▾</button>
@@ -457,6 +491,110 @@ function applyTheme() {
   document.documentElement.dataset.theme =
     localStorage.getItem("alphalab-theme") || "dark";
 }
+// ---- Live trading controls: the member's keys, as buttons ----------
+// Every consequential switch demands a TYPED confirmation (GO-LIVE, or
+// the trade id for arming); the kill switch alone is one click. All
+// control actions route through the local relay with the service token
+// and land in the order journal. Agents never see this surface.
+const RELAY = "http://127.0.0.1:8643";
+let liveStatus = null;
+async function liveApi(path, body) {
+  const response = await fetch(`${RELAY}${path}?token=${token}`, body
+    ? {method: "POST", headers: {"Content-Type": "application/json"},
+       body: JSON.stringify(body)}
+    : undefined);
+  return response.json();
+}
+async function refreshLiveStatus() {
+  try {
+    liveStatus = await liveApi("/live/status");
+  } catch { liveStatus = null; }
+  const pill = document.getElementById("live-pill");
+  if (!liveStatus) {
+    pill.textContent = "live: relay down";
+    pill.className = "off";
+    return;
+  }
+  const armedCount = Object.keys(liveStatus.armed || {}).length;
+  if (liveStatus.kill) {
+    pill.textContent = "live: KILLED";
+    pill.className = "killed";
+  } else if (liveStatus.live_enabled && liveStatus.master) {
+    pill.textContent = `live: ON · ${armedCount} armed`;
+    pill.className = "on";
+  } else {
+    pill.textContent = "live: off";
+    pill.className = "off";
+  }
+}
+function livePanelRender() {
+  const panel = document.getElementById("live-panel");
+  panel.replaceChildren();
+  if (!liveStatus) {
+    panel.append(el("div", {class: "muted"},
+      "the tick relay is not answering — live controls unavailable"));
+    return;
+  }
+  panel.append(el("div", {class: "muted"},
+    `account ${liveStatus.account} · options only · ` +
+    `whitelist ${(liveStatus.whitelist || []).join(", ")}`));
+  const confirmRow = el("div", {class: "lp-row"});
+  const confirmInput = el("input", {type: "text",
+    placeholder: "type GO-LIVE"});
+  confirmRow.append(el("span", {}, "confirmation"), confirmInput);
+  panel.append(confirmRow);
+  const mkToggle = (label, path, current) => {
+    const row = el("div", {class: "lp-row"});
+    row.append(el("span", {}, `${label}: ${current ? "ON" : "off"}`));
+    const btn = el("button", {type: "button"},
+      current ? "turn off" : "turn on");
+    btn.addEventListener("click", async () => {
+      const reply = await liveApi(path,
+        {on: !current, confirm: confirmInput.value.trim()});
+      if (reply.error) alert(reply.error);
+      await refreshLiveStatus();
+      livePanelRender();
+    });
+    row.append(btn);
+    panel.append(row);
+  };
+  mkToggle("engine master", "/live/master", liveStatus.master);
+  mkToggle("desk risk layer", "/live/enable", liveStatus.live_enabled);
+  const armed = Object.entries(liveStatus.armed || {});
+  if (armed.length) {
+    for (const [tradeId, arm] of armed) {
+      const row = el("div", {class: "lp-row"});
+      row.append(el("span", {},
+        `armed: ${tradeId} ≤$${arm.max_debit}`));
+      const disarm = el("button", {type: "button"}, "disarm");
+      disarm.addEventListener("click", async () => {
+        await liveApi("/live/arm", {trade_id: tradeId,
+          confirm: tradeId, disarm: true});
+        await refreshLiveStatus();
+        livePanelRender();
+      });
+      row.append(disarm);
+      panel.append(row);
+    }
+  } else panel.append(el("div", {class: "muted"},
+    "no trades armed — arm from a trade's cockpit"));
+  const kill = el("button", {type: "button", class: "danger"},
+    "KILL — halt all live trading now");
+  kill.addEventListener("click", async () => {
+    await liveApi("/live/kill", {});
+    await refreshLiveStatus();
+    livePanelRender();
+  });
+  panel.append(kill);
+}
+document.getElementById("live-pill").addEventListener("click", () => {
+  const panel = document.getElementById("live-panel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) refreshLiveStatus().then(livePanelRender);
+});
+refreshLiveStatus();
+setInterval(refreshLiveStatus, 15000);
+
 // Every desk is one environment of this harness, and picking between
 // them happens HERE — the platform home shows one AlphaLab entry; the
 // desks menu switches, opens fresh ones (mess one up, start clean,
@@ -1961,6 +2099,42 @@ function cockpitStrip(meta) {
     if (plan.last_error) beat.append(el("span", {class: "violation"},
       ` ⚠ ${plan.last_error}`));
     beat.append(focusChip(`plans/${meta.tradeKey.slice(7)}`, plan));
+    const tradeId = meta.tradeKey.slice(7);
+    const armedHere = liveStatus?.armed?.[tradeId];
+    const armBtn = el("button", {type: "button",
+      class: "desk-rename" + (armedHere ? " armed" : ""),
+      title: armedHere ? "this trade is ARMED for live orders — click "
+        + "to disarm" : "arm this trade for LIVE orders (typed "
+        + "confirmation required)"},
+      armedHere ? `LIVE ARMED ≤$${armedHere.max_debit}` : "arm live");
+    armBtn.addEventListener("click", async () => {
+      if (armedHere) {
+        await liveApi("/live/arm", {trade_id: tradeId,
+          confirm: tradeId, disarm: true});
+        await refreshLiveStatus();
+        renderChartModal();
+        return;
+      }
+      const typed = el("input", {type: "text",
+        placeholder: `type "${tradeId}" to arm`});
+      const cap = el("input", {type: "text", placeholder: "max $ / order",
+        value: "400"});
+      const go = el("button", {type: "button", class: "desk-rename"},
+        "confirm arm");
+      const holder = el("span", {class: "arm-inline"});
+      go.addEventListener("click", async () => {
+        const reply = await liveApi("/live/arm", {trade_id: tradeId,
+          confirm: typed.value.trim(),
+          max_debit: parseFloat(cap.value) || undefined});
+        if (reply.error) { typed.placeholder = reply.error; return; }
+        await refreshLiveStatus();
+        renderChartModal();
+      });
+      holder.append(typed, cap, go);
+      armBtn.replaceWith(holder);
+      typed.focus();
+    });
+    beat.append(armBtn);
     strip.append(beat);
   }
   // countdown clocks from overlays: data prints, earnings, deadlines
