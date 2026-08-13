@@ -247,6 +247,7 @@ def live_orders(brackets, risk_mod, now_iso):
                 "lease_id": previous.get("lease_id"),
                 "live_confirm": "SUBMIT_REAL_OPTION_ORDER",
                 "option_only_ack": True,
+                "account": str(standing.get("account") or ""),
                 "owner": "tick-relay-live"})
             record.update({"status": "submitted" if reply.get("ok")
                            else "modify_failed",
@@ -270,6 +271,7 @@ def live_orders(brackets, risk_mod, now_iso):
             if args.get("stop") else 1.0,
             "live_confirm": "SUBMIT_REAL_OPTION_ORDER",
             "option_only_ack": True,
+            "account": str(standing.get("account") or ""),
             "owner": "tick-relay-live"})
         answer = reply.get("answer") if isinstance(reply.get("answer"),
                                                    dict) else {}

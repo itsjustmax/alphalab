@@ -27,6 +27,7 @@ ORDER_JOURNAL = os.path.expanduser("~/.alphalab/live-orders.jsonl")
 
 DEFAULT_RISK = {
     "live_enabled": False,
+    "account": "",
     "max_debit_per_order": 400.0,
     "max_contracts": 1,
     "max_open_trades_live": 1,
@@ -80,6 +81,9 @@ def order_refusals(order, risk, armed, journal_today):
         arm = {}
     if str(order.get("sec_type") or "OPT").upper() != "OPT":
         refusals.append("live orders are OPTIONS ONLY")
+    if not str(risk.get("account") or "").strip():
+        refusals.append("no account pinned in risk.json — refusing "
+                        "rather than falling through to a TWS default")
     symbol = str(order.get("symbol") or "").upper()
     whitelist = [str(s).upper() for s in risk.get("symbol_whitelist") or []]
     if symbol not in whitelist:

@@ -758,7 +758,8 @@ def test_stop_leg_is_sell_only():
 def test_risk_layer_refuses_by_name():
     import risk
 
-    standing = {**risk.DEFAULT_RISK, "live_enabled": True}
+    standing = {**risk.DEFAULT_RISK, "live_enabled": True,
+                "account": "U11709485"}
     armed = {"spy-wall-break": {"max_debit": 400}}
     ok_order = {"trade_id": "spy-wall-break", "kind": "entry",
                 "symbol": "SPY", "sec_type": "OPT", "right": "C",
@@ -777,6 +778,8 @@ def test_risk_layer_refuses_by_name():
         ok_order, {**standing, "kill": True}, armed, []))
     assert any("not enabled" in r for r in risk.order_refusals(
         ok_order, {**standing, "live_enabled": False}, armed, []))
+    assert any("no account pinned" in r for r in risk.order_refusals(
+        ok_order, {**standing, "account": ""}, armed, []))
 
     journal = [{"trade_id": "spy-wall-break", "kind": "entry",
                 "status": "submitted", "debit": 350}]
