@@ -458,6 +458,10 @@ def decide(context, state, now, budget=DEFAULT_BUDGET):
     if requested:
         return "build", (f"plan awaiting compilation: "
                          f"{', '.join(requested)} — the member is waiting")
+    triggers = sorted(k for k, v in (context or {}).items()
+                      if k.startswith("triggers/") and v)
+    if triggers:
+        return "build", f"steward summoned: {', '.join(triggers)}"
     unnarrated = sorted(set(state.get("unnarrated_fills") or []))
     if unnarrated:
         return "build", f"paper fill recorded: {', '.join(unnarrated)}"
@@ -814,6 +818,16 @@ class Pilot:
             if error:
                 print(f"[{utc_now():%H:%M:%S}] plan {key}: {error}",
                       flush=True)
+                trigger_key = f"triggers/{trade_id}"
+                if not context.get(trigger_key):
+                    self._api(
+                        "POST",
+                        f"/environments/{self.environment}/context",
+                        {"key": trigger_key,
+                         "value": {"reason": f"plan error: {error}",
+                                   "from": "runner",
+                                   "at": now.isoformat(
+                                       timespec="seconds")}})
             else:
                 ran += 1
         return ran
@@ -886,6 +900,19 @@ class Pilot:
                 self._api("POST",
                           f"/environments/{self.environment}/say",
                           {"text": f"[plan {trade_id}] {text}"})
+            return
+        if kind == "summon":
+            trigger_key = f"triggers/{trade_id}"
+            if context.get(trigger_key):
+                return  # already summoned; one look at a time
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": trigger_key,
+                       "value": {"reason": str(action.get("reason")),
+                                 "from": "bot",
+                                 "at": update.get("last_run")}})
+            print(f"[{utc_now():%H:%M:%S}] plan {trade_id}: steward "
+                  f"summoned — {str(action.get('reason'))[:80]}",
+                  flush=True)
             return
         if kind == "retire":
             if trade.get("state") == "open-simulated":
@@ -1258,9 +1285,32 @@ class Pilot:
         self.stream_health(context, now)
         self.last_holders = stream_holders(context)
         action, reason = decide(context, self.state, now, self.budget)
+        steward_model = None
+        if action == "build" and reason.startswith("steward summoned"):
+            # charge the steward before the turn, then retire the
+            # trigger — the turn reads its charge in the conversation
+            for key, trigger in sorted(context.items()):
+                if not key.startswith("triggers/") or not trigger:
+                    continue
+                trade_id = key[len("triggers/"):]
+                steward = ((context.get(f"plans/{trade_id}") or {})
+                           .get("steward")) or {}
+                steward_model = steward.get("model") or steward_model
+                self._api(
+                    "POST", f"/environments/{self.environment}/say",
+                    {"text": f"STEWARD TURN — trades/{trade_id}: "
+                     f"{trigger.get('reason')} (summoned by "
+                     f"{trigger.get('from', 'bot')}). Examine this "
+                     f"trade's cockpit, data programs, and plan state; "
+                     f"ensure the trade works as intended; touch only "
+                     f"this trade's surfaces; report what you found."})
+                self._api(
+                    "POST", f"/environments/{self.environment}/context",
+                    {"key": key, "value": None})
         if action == "build":
+            chosen = steward_model or self.model
             self._api("POST", f"/environments/{self.environment}/build",
-                      {"model": self.model} if self.model else {})
+                      {"model": chosen} if chosen else {})
             self.state["last_turn"] = now.isoformat(timespec="seconds")
             self.state["builds_today"] = self.state.get("builds_today", 0) + 1
             self.state["seen_answers"] = sorted(

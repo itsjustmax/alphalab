@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.29.0",
+  "version": "2.30.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -22,6 +22,7 @@
     "studies/": "the desk's chart-study library, plugins/<slug>: {label, describe, appliesTo: contract|underlying|tape|both, overlay: {levels/bands/clocks} | program: {inputs, code} + minutes; program args may carry {\"$\": \"symbol\"}-style placeholders filled per trade}. Designed once when the member presses \uFF0B on a cockpit pane; applying instantiates overlays/<trade>-lib-<slug>",
     "overlays/": "chart overlays for one trade's cockpit, overlays/<trade-id>-<slug>: {target: contract|underlying, levels: [{price, label}], bands: [{lower, upper, label, side}], clocks: [{at, label}]} — pure data rendered by the cockpit's custom plugin. COMPUTED overlays add program {inputs: [read-only tool reads], code: 'def compute(inputs): return {...}'} + minutes: the runner executes on cadence (restricted namespace, validated output, errors land as last_error). Retire when the moment passes",
     "cockpit/": "one trade's own cells at cockpit/<trade-id>/<slug> — the desk card grammar, rendered inside that trade's cockpit modal: candidate contracts' live quotes, comparison tables, custom_d3, news",
+    "triggers/": "steward summons, triggers/<trade-id>: {reason, from: bot|runner, at} — written by a plan's summon action or by the runner on a plan error; the autopilot answers each with a STEWARD TURN charged in the room, then retires the key. Agents never write these directly; the summon action is the lane.",
     "plans/": "one key per managed position, plans/<trade-id>: {plan: the member's words, status, program, state}. status ladder: requested (member wants a plan — compiling one is the next turn's first job) → draft (agent wrote the program) → active/paused (MEMBER-ONLY moves, made in the UI after inspecting; agents NEVER write active). program = {explanation: prose the member reads, inputs: [{name, tool, args}] read-only tools only, code: 'def manage(inputs, state):' pure Python answering {actions, state}, tests: [{name, inputs, state, expect_actions|expect_no_actions|expect_state_contains}]}. Validate with plan_check before writing. Activated plans are archived to the machine's plan library (browse with plan_library — proven examples beat blank pages); a close adds the judged outcome and retires the plan to status completed. The autopilot gathers the inputs each pass, runs the program, and routes its actions (close, place_exit {price}, cancel_exit, note {text}) through the market gate; `state` persists watermarks between passes. inputs also carry `position` {entry, quantity, contract} and `now` (ET ISO) for free.",
     "templates/": "desk-designed cell blueprints (deep-model work, done once): {target, fields, cell with {\"$\": field} placeholders} — extend the shipped templates; any model then operates them via forms/"
   },

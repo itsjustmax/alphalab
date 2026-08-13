@@ -115,6 +115,21 @@ def test_a_new_trading_date_resets_the_budget():
     assert rolled["date"] == "2026-08-13"
 
 
+def test_a_pending_trigger_summons_the_steward():
+    context = dict(ACTIVE_DESK)
+    context["triggers/nvda"] = {"reason": "stop within 2 ticks",
+                                "from": "bot"}
+    action, reason = autopilot.decide(context, state(), RTH)
+    assert (action, reason) == ("build", "steward summoned: triggers/nvda")
+
+
+def test_a_retired_trigger_summons_nobody():
+    context = dict(ACTIVE_DESK)
+    context["triggers/nvda"] = None
+    _, reason = autopilot.decide(context, state(), RTH)
+    assert "steward" not in reason
+
+
 def test_the_audit_names_only_the_broken_cases():
     cases = {"trades/good": {"state": "idea"}, "trades/bad": {"state": "open"}}
     verdicts = {"trades/good": [], "trades/bad": ["no receipted fill"]}

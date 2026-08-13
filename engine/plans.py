@@ -45,7 +45,7 @@ READ_ONLY_TOOLS = {
 }
 
 ALLOWED_ACTIONS = {"close", "place_exit", "cancel_exit", "arm_entry",
-                   "retire", "note"}
+                   "retire", "summon", "note"}
 
 SAFE_BUILTINS = {
     "abs": abs, "min": min, "max": max, "round": round, "len": len,
@@ -138,6 +138,10 @@ def run_decision(code, inputs, state):
                 return None, f"{action['action']} price is non-negative"
         if action["action"] == "note" and not str(action.get("text") or "").strip():
             return None, "a note carries text"
+        if action["action"] == "summon" \
+                and not str(action.get("reason") or "").strip():
+            return None, ("summon carries a reason — the steward agent "
+                          "reads it to know what to examine")
     market = result.get("market")
     if market is not None:
         if not isinstance(market, dict):

@@ -356,6 +356,52 @@ class AutopilotPlans(unittest.TestCase):
         pilot.manage_plans(context, NOW)
         self.assertEqual(pilot.said, [])  # nothing re-announced
 
+    def test_a_summon_without_a_reason_is_refused(self):
+        code = ("def manage(inputs, state):\n"
+                " return {'actions': [{'action': 'summon'}],"
+                " 'state': state,"
+                " 'market': {'stop': 0.5, 'target': 1.92}}")
+        context = _live_context(code=code)
+        pilot = _pilot(context, {"live_quote":
+                                 {"quote": {"bid": 1.0, "ask": 1.1}}})
+        pilot.manage_plans(context, NOW)
+        self.assertIn("summon carries a reason",
+                      context["plans/nvda"].get("last_error") or "")
+        # the broken program still gets its steward's eyes — but as a
+        # runner-reported error, never as a bot-authored summon
+        self.assertEqual(context["triggers/nvda"].get("from"), "runner")
+
+    def test_a_summon_writes_one_trigger_only(self):
+        code = ("def manage(inputs, state):\n"
+                " return {'actions': [{'action': 'summon',"
+                " 'reason': 'quote gapped past the stop'}],"
+                " 'state': state,"
+                " 'market': {'stop': 0.5, 'target': 1.92}}")
+        context = _live_context(code=code)
+        pilot = _pilot(context, {"live_quote":
+                                 {"quote": {"bid": 1.0, "ask": 1.1}}})
+        pilot.manage_plans(context, NOW)
+        trigger = context.get("triggers/nvda")
+        self.assertEqual(trigger.get("reason"),
+                         "quote gapped past the stop")
+        self.assertEqual(trigger.get("from"), "bot")
+        pilot.manage_plans(context, NOW)  # already summoned — no re-write
+        writes = [c for c in pilot.calls
+                  if c[1].endswith("/context")
+                  and (c[2] or {}).get("key") == "triggers/nvda"]
+        self.assertEqual(len(writes), 1)
+
+    def test_a_plan_error_summons_the_steward(self):
+        code = ("def manage(inputs, state):\n"
+                " raise ValueError('inputs went dark')")
+        context = _live_context(code=code)
+        pilot = _pilot(context, {"live_quote":
+                                 {"quote": {"bid": 1.0, "ask": 1.1}}})
+        pilot.manage_plans(context, NOW)
+        trigger = context.get("triggers/nvda")
+        self.assertIn("plan error", trigger.get("reason"))
+        self.assertEqual(trigger.get("from"), "runner")
+
     def test_notes_do_not_repeat(self):
         code = ("def manage(inputs, state):\n"
                 " return {'actions': [{'action': 'note',"

@@ -304,6 +304,41 @@ via a card program, or check `capabilities` for the broken lane — and
 say what you found. The member's chips show the same staleness; never
 let a quiet stream pass as a live one.
 
+## The trade steward — every trade has a dedicated agent
+
+Every trade is somebody's job. When you stage a trade, you are its
+steward: you set up its dashboard (tape cell for every entry candidate,
+premium and underlying panes, the studies that matter to THIS thesis),
+you get its data programs running and collecting, and you stay
+answerable for it working as intended.
+
+The bot can call you. `summon` is in the action vocabulary:
+`{"action": "summon", "reason": "..."}` writes `triggers/<trade-id>`,
+and the autopilot fires a STEWARD TURN — a conversation charge naming
+the trade and the reason. A plan runtime error summons automatically.
+When you see `STEWARD TURN — trades/<id>: <reason>` in the
+conversation, that turn belongs to that trade:
+
+- Read the reason first. The bot is deterministic; if it summoned you,
+  its program decided the situation needs judgment, not arithmetic.
+- Examine that trade's surfaces: cockpit brief, tape freshness, pane
+  data, plan state and `last_error`, the factors the thesis rests on
+  (zones still valid? news since staging? invalidation approached?).
+- Ensure the machinery works: streams live, programs collecting,
+  brackets published, evidence keys fresh. Heal what you can; name
+  what you cannot.
+- Touch only that trade's surfaces. A steward turn is scoped — the
+  rest of the desk waits for the desk's own rhythm.
+- Report what you found in the room, plainly, even when the answer is
+  "all factors intact, no action".
+
+Write summons into your programs wherever your plan's logic reaches
+the edge of what arithmetic should decide: approaching invalidation,
+inputs going stale or dark, a factor the thesis depends on moving
+against you, N cycles complete and the thesis needs re-underwriting.
+A steward may carry its own mind: `plans/<id>.steward = {"model":
+"..."}` and steward turns for that trade run on that model.
+
 ## Honesty
 
 Every tool answers a receipt: ok, summary, data, as_of, gaps. Keep

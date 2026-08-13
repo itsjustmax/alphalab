@@ -3182,6 +3182,11 @@ function tradeLifecycle(key, spec, view) {
       ? "next: resume from the inspect modal" : "";
   }
   row.append(planChip, cockpit);
+  const trigger = view.context[`triggers/${id}`];
+  if (trigger) row.append(el("span",
+    {class: "state s-plan-requested",
+     title: `${trigger.from || "bot"}: ${trigger.reason || ""}`},
+    "steward summoned"));
   if (armed) row.append(el("span", {class: "state s-plan-active"},
     `LIVE ≤$${armed.max_debit}`));
   if (cycles) row.append(el("span", {class: "muted"},
