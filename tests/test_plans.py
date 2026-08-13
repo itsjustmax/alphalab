@@ -517,3 +517,45 @@ def test_arm_entry_never_fires_on_an_open_position():
                              {"quote": {"bid": 3.9, "ask": 3.9}}})
     pilot.manage_plans(context, NOW)
     assert "widgets/fill-nvda" not in context
+
+
+GAMMA_LEVELS = """
+def compute(inputs):
+    gamma = inputs['gamma']['gamma_v2']
+    return {'levels': [{'price': gamma['gamma_centroid'],
+                        'label': 'gamma centroid'}],
+            'target': 'underlying'}
+"""
+
+
+def test_computed_overlays_run_and_land_on_the_entry():
+    import datetime
+    context = {"overlays/spx-play-gamma": {
+        "target": "underlying",
+        "program": {"inputs": [{"name": "gamma", "tool": "spx_gamma",
+                                "args": {}}],
+                    "code": GAMMA_LEVELS},
+        "minutes": 10}}
+    pilot = _pilot(context, {"spx_gamma":
+                             {"gamma_v2": {"gamma_centroid": 7758.2}}})
+    ran = pilot.compute_overlays(context, NOW)
+    assert ran == 1
+    computed = context["overlays/spx-play-gamma"]
+    assert computed["levels"] == [{"price": 7758.2,
+                                   "label": "gamma centroid"}]
+    assert computed["computed_at"]
+    # cadence throttle: a second pass inside the window does nothing
+    assert pilot.compute_overlays(context, NOW) == 0
+
+
+def test_overlay_programs_cannot_answer_arbitrary_shapes():
+    result, error = plans.run_compute(
+        "def compute(inputs):\n return {'orders': [{'buy': 1}]}", {})
+    assert result is None and "unknown field" in error
+
+
+def test_overlay_output_shape_is_validated():
+    result, error = plans.run_compute(
+        "def compute(inputs):\n return {'levels': [{'price': 'high'}]}",
+        {})
+    assert result is None and "numeric" in error

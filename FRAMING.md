@@ -192,6 +192,23 @@ non-closed trade. A trade is becoming the execution of a plan, not one
 open and close; re-opening cycles are a coming extension designed with
 the member — do not improvise them.
 
+**A trade's cockpit is buildable.** `cockpit/<trade-id>/<slug>`
+entries are that trade's own cells, rendered inside its cockpit with
+the desk's card grammar — live quotes for the candidate contracts of
+one setup (watch several, act on the one that confirms), comparison
+tables, custom_d3 visuals, the underlying's news. Same atomicity law
+as everywhere: each cell carries its own program.
+
+**Computed overlays are code with a bounded mouth.** An overlay entry
+may carry `program: {inputs: [read-only tool reads], code: "def
+compute(inputs): return {levels/bands/clocks/note}"}` plus `minutes`;
+the runner executes it on cadence in the same restricted namespace as
+plan decisions and writes the validated data back onto the entry.
+This is how thinking becomes chartable: gamma-derived levels for SPX,
+option-volume entry signals, whatever the trade needs — the
+computation is free, the output shape is law, and errors land on the
+entry as `last_error`.
+
 **Chart overlays are data, not code.** The member's trade cockpit
 (click a position's sparkline) renders `overlays/<trade-id>-<slug>`
 entries under its "custom" plugin: {target: "contract"|"underlying",

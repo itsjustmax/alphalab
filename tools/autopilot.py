@@ -930,6 +930,70 @@ class Pilot:
                       f"{', '.join(report['stale'])}", flush=True)
         return report
 
+    def compute_overlays(self, context, now):
+        """Run every overlay program; computed data lands on its entry.
+
+        An agent writes code that THINKS about a trade — gamma-derived
+        levels, option-volume signals — as `def compute(inputs)` with
+        declared read-only inputs, on the overlay entry itself. Same
+        restricted namespace as plan decisions; output must be overlay
+        data (validated, bounded); errors land on the entry, named.
+        """
+
+        ran = 0
+        for key, overlay in sorted((context or {}).items()):
+            if not key.startswith("overlays/") \
+                    or not isinstance(overlay, dict):
+                continue
+            program = overlay.get("program")
+            if not isinstance(program, dict) or not program.get("code"):
+                continue
+            cadence = max(2, int(overlay.get("minutes") or 10))
+            last = gates.parse_clock(overlay.get("computed_at"))
+            if last is not None \
+                    and (now - last).total_seconds() < cadence * 60:
+                continue
+            inputs = {"now": now.astimezone(gates.ET)
+                              .isoformat(timespec="seconds")}
+            blind = False
+            for declaration in program.get("inputs") or []:
+                tool = str(declaration.get("tool") or "")
+                if tool not in plans.READ_ONLY_TOOLS:
+                    blind = True
+                    break
+                try:
+                    reply = self._api(
+                        "POST",
+                        f"/environments/{self.environment}/tools/{tool}",
+                        {"args": declaration.get("args") or {}})
+                    inputs[str(declaration.get("name"))] = \
+                        (reply.get("result") or {}).get("data")
+                except Exception:
+                    blind = True
+                    break
+            if blind:
+                continue
+            result, error = plans.run_compute(program.get("code"), inputs)
+            update = dict(overlay)
+            update["computed_at"] = now.isoformat(timespec="seconds")
+            if error:
+                update["last_error"] = error
+                print(f"[{utc_now():%H:%M:%S}] overlay {key}: {error}",
+                      flush=True)
+            else:
+                update.pop("last_error", None)
+                for field in ("levels", "bands", "clocks", "note"):
+                    if field in result:
+                        update[field] = result[field]
+                    else:
+                        update.pop(field, None)
+                if result.get("target"):
+                    update["target"] = result["target"]
+                ran += 1
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": key, "value": update})
+        return ran
+
     def record_orders(self, context, now):
         """Record every order whose market gate holds; announce each one."""
 
@@ -986,6 +1050,7 @@ class Pilot:
                   f"broken — {', '.join(sorted(audited))}", flush=True)
         self.record_orders(context, now)
         self.manage_plans(context, now)
+        self.compute_overlays(context, now)
         self.stream_health(context, now)
         self.last_holders = stream_holders(context)
         action, reason = decide(context, self.state, now, self.budget)

@@ -290,3 +290,78 @@ def plan_check(arguments):
         {"violations": [], "tests": results, "passed": not failed},
         gaps=[f"{r['name']}: {r['detail']}" for r in failed],
         ok=not failed)
+
+
+# ---- Computed overlays: agent code that thinks about a trade --------
+# An overlays/<trade-id>-<slug> entry may carry a program:
+#   {"program": {"inputs": [{name, tool, args}],   # read-only tools
+#                "code": "def compute(inputs): ... return {...}"},
+#    "minutes": 10}
+# The autopilot gathers the inputs and runs compute() in the same
+# restricted namespace as plan decisions; the answer must be overlay
+# DATA (levels/bands/clocks/note), which lands back on the entry where
+# the cockpit's custom plugin renders it. Creative freedom in the
+# computation; a bounded, validated shape at the boundary.
+
+MAX_OVERLAY_ITEMS = 24
+
+
+def overlay_violations(value):
+    """Every way computed overlay output breaks the shape, by name."""
+
+    if not isinstance(value, dict):
+        return ["compute() answers one JSON object"]
+    violations = []
+    for field, required in (("levels", ("price",)), ("bands",
+                            ("lower", "upper")), ("clocks", ("at",))):
+        items = value.get(field)
+        if items is None:
+            continue
+        if not isinstance(items, list) or len(items) > MAX_OVERLAY_ITEMS:
+            violations.append(
+                f"{field} is a list of at most {MAX_OVERLAY_ITEMS}")
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                violations.append(f"every {field} item is an object")
+                break
+            for need in required:
+                raw = item.get(need)
+                if need == "at":
+                    if not str(raw or "").strip():
+                        violations.append(f"a clock needs an `at` time")
+                        break
+                else:
+                    try:
+                        float(raw)
+                    except (TypeError, ValueError):
+                        violations.append(
+                            f"{field}.{need} must be numeric, got {raw!r}")
+                        break
+    extras = set(value) - {"levels", "bands", "clocks", "note", "target"}
+    if extras:
+        violations.append(
+            f"unknown field(s) {sorted(extras)} — computed overlays "
+            f"answer levels/bands/clocks/note/target only")
+    return violations
+
+
+def run_compute(code, inputs):
+    """Run compute(inputs) in the restricted namespace; validate shape."""
+
+    namespace = {"__builtins__": dict(SAFE_BUILTINS)}
+    try:
+        exec(code, namespace)  # noqa: S102 — restricted, data-only output
+    except Exception as error:
+        return None, f"the program does not load: {str(error)[:200]}"
+    compute = namespace.get("compute")
+    if not callable(compute):
+        return None, "the program defines no compute(inputs)"
+    try:
+        result = compute(dict(inputs or {}))
+    except Exception as error:
+        return None, f"compute() raised: {str(error)[:200]}"
+    violations = overlay_violations(result)
+    if violations:
+        return None, "; ".join(violations)
+    return result, None

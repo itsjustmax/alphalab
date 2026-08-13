@@ -1559,6 +1559,19 @@ function renderChartModal() {
     cockpitStrip(meta),
     chartPane("contract", meta, state.contract),
     chartPane("underlying", meta, state.underlying));
+  // Cockpit cells: this trade's OWN micro-dashboard. Any entry at
+  // cockpit/<trade-id>/<slug> renders here with the same card grammar
+  // as the main deck — candidate contracts' live quotes, comparison
+  // tables, agent-coded custom_d3 visuals, news for the underlying.
+  const cellKeys = Object.keys(lastView?.context || {})
+    .filter(key => key.startsWith(`cockpit/${state.tradeKey.slice(7)}/`)
+      && lastView.context[key])
+    .sort();
+  if (cellKeys.length) {
+    const grid = el("div", {class: "evidence-grid pane"});
+    for (const key of cellKeys) grid.append(evidenceCell(key));
+    body.append(grid);
+  }
   // the builder: commission a new overlay in plain words — the agent
   // writes overlays/<id> data entries; the custom plugin renders them
   composerReady.then(() => {
@@ -1566,15 +1579,22 @@ function renderChartModal() {
     const mount = el("div", {class: "pane", id: "overlay-composer"});
     Manifold.composer({
       mount, envId, token, scope: "overlay",
-      prelude: `About trades/${state.tradeKey.slice(7)}: design a chart ` +
-        "overlay. Write overlays/" + state.tradeKey.slice(7) +
-        "-<slug> entries shaped {target: contract|underlying, levels: " +
-        "[{price, label}], bands: [{lower, upper, label, side}], " +
-        "clocks: [{at, label}]} — pure data; the cockpit renders it " +
-        "under the 'custom' plugin. Cite your sources in a findings/ " +
-        "entry if the overlay makes a claim. Member says: ",
-      placeholder: "build an overlay — “mark the 5m zone on the contract " +
-        "and the hourly zone it must break”, “countdown to CPI”…",
+      prelude: `About trades/${state.tradeKey.slice(7)}: build for ` +
+        "this trade's cockpit. Three surfaces: (1) overlays/" +
+        state.tradeKey.slice(7) + "-<slug> = chart overlays {target: " +
+        "contract|underlying, levels: [{price,label}], bands: " +
+        "[{lower,upper,label,side}], clocks: [{at,label}]}; add a " +
+        "program {inputs: [read-only tool reads], code: 'def " +
+        "compute(inputs): return {...}'} + minutes for COMPUTED " +
+        "overlays (gamma levels, volume signals) — the runner executes " +
+        "it on cadence. (2) cockpit/" + state.tradeKey.slice(7) +
+        "/<slug> = this trade's own cells, same card grammar as the " +
+        "desk (live quotes for candidate contracts, tables, custom_d3, " +
+        "news). (3) plans/" + state.tradeKey.slice(7) + " for " +
+        "management logic. Member says: ",
+      placeholder: "build for this trade — “gamma levels on the " +
+        "underlying”, “watch the 530C and 540C side by side”, " +
+        "“countdown to CPI”…",
     });
     body.append(mount);
   }).catch(() => {});
@@ -2457,6 +2477,15 @@ function evidenceCell(key) {
   } else if (value.kind === "metric") {
     cell.append(el("div", {class: "metric"}, String(value.value ?? "—")));
     if (value.label) cell.append(el("div", {class: "metric-label"}, value.label));
+  } else if (value.kind === "custom_d3") {
+    cell.append(customD3(value));
+  } else if (value.kind === "news") {
+    for (const story of (value.items || []).slice(0, 6)) {
+      const row = el("div", {class: "news-item"});
+      row.append(el("a", {href: story.link || "#", target: "_blank",
+        rel: "noopener noreferrer"}, story.title || "(untitled)"));
+      cell.append(row);
+    }
   } else {
     cell.append(el("pre", {class: "data-body"},
       JSON.stringify(value, null, 1).slice(0, 1400)));
