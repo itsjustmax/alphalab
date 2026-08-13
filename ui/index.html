@@ -991,9 +991,7 @@ function render(view) {
   container.replaceChildren();
   for (const section of [
     renderWatchlist(view),
-    renderPositions(view),
-    Object.keys(view.context).some(k => k.startsWith("trades/"))
-      ? renderTrades(view) : null,
+    renderTrades(view),
     renderWidgets(view),
     renderFindings(view),
     renderConversation(view),
@@ -1281,52 +1279,71 @@ function applyTickReady(symbol) {
 }
 tickLoop();
 
-function renderPositions(view) {
-  const rows = Object.entries(view.context).filter(([key, c]) =>
-    key.startsWith("trades/") && c &&
-    (c.state === "open-simulated" || (c.state === "closed" && c.fill)));
+function renderTrades(view) {
+  // ONE section: every trade is a position you are in or not in yet.
+  // Each row carries the whole lifecycle — thesis, state, live PnL or
+  // realized cycles, the premium chart (the cockpit's door), and the
+  // management chain from create to bot-active to armed.
+  const order = {"open-simulated": 0, "watching": 1, "idea": 2, "closed": 3};
+  const rows = Object.entries(view.context)
+    .filter(([key, value]) => key.startsWith("trades/") && value)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([, a], [, b]) => (order[a?.state] ?? 4) - (order[b?.state] ?? 4));
   if (!rows.length) return null;
   const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "Positions — simulated, paper only"));
+  section.append(el("h2", {}, "Trades — simulated, paper only"));
   const table = el("table");
   const head = el("tr");
-  for (const column of ["contract", "state", "entry", "pnl from entry",
+  for (const column of ["trade", "state", "position", "pnl", "premium",
                         "underlying (EOD)", "management"])
     head.append(el("td", {class: "key"}, column));
   table.append(head);
   for (const [key, c] of rows) {
     const line = el("tr");
-    const name = el("td", {class: "contract-cell"},
-      (c.contracts || []).map(contractLabel).join(" + ")
-        || (c.fill || {}).contract || key.slice(7));
+    const name = el("td", {class: "contract-cell"});
+    for (const contract of (c.contracts || []))
+      name.append(el("div", {}, contractLabel(contract)));
+    if (!(c.contracts || []).length)
+      name.append(el("div", {}, key.slice(7)));
+    const details = el("a", {class: "muted", style:
+      "font-size:.72rem;cursor:pointer"}, "details");
+    details.addEventListener("click", () => openTradeModal(key));
+    name.append(details);
     name.append(focusChip(key, c));
     line.append(name);
     const stateCell = el("td");
     stateCell.append(el("span", {class: `state s-${c.state}`}, c.state));
     line.append(stateCell);
+
     const f = c.fill;
-    const entryCell = el("td", {class: "val"});
+    const cycles = (c.executions || []).filter(x => x.exit);
+    const positionCell = el("td", {class: "val"});
     if (f) {
-      entryCell.append(el("div", {}, `${f.quantity} @ $${f.price}`));
-      entryCell.append(el("div", {class: "muted"},
+      positionCell.append(el("div", {}, `${f.quantity} @ $${f.price}`));
+      positionCell.append(el("div", {class: "muted"},
         String(f.observed_at).slice(0, 10)));
-      entryCell.title = `filled against the live market ` +
-        `${f.bid}×${f.ask} · ${f.observed_at}`;
-    } else entryCell.textContent = "—";
-    line.append(entryCell);
+      positionCell.title = `filled against ${f.bid}×${f.ask} · ` +
+        `${f.observed_at}`;
+    } else {
+      positionCell.append(el("div", {class: "muted"},
+        c.state === "closed" ? "closed" : "flat — not in yet"));
+      if (cycles.length) positionCell.append(el("div", {class: "muted"},
+        `${cycles.length} cycle(s) done`));
+    }
+    line.append(positionCell);
+
+    const held = [...(c.contracts || []), (c.fill || {}).contract]
+      .map(contractLabel)
+      .find(x => x && contractArgs(x).sec_type === "OPT") || "";
     const joined = el("td", {class: "pnl-joined"});
     const pnl = el("div", {class: "val"}, "—");
     joined.append(pnl);
-    // Prefer a label the stream lane can parse (the canonical 8-digit
-    // date form) — a fill recorded in display notation ("NVDA 8/21
-    // 235C") would otherwise quote the STOCK and mark the option wrong.
-    const held = [...(c.contracts || []), (c.fill || {}).contract]
-      .map(contractLabel)
-      .find(x => x && contractArgs(x).sec_type === "OPT")
-      || contractLabel((c.fill || {}).contract || (c.contracts || [])[0] || "");
+    const realized = cycles.reduce((sum, x) =>
+      sum + (x.exit.price - x.entry.price)
+        * (x.entry.quantity || 1) * 100, 0);
     if (c.state === "open-simulated" && f && held) {
       const kept = pnlMemory[key];
-      if (kept) {  // a rebuilt row starts from the last painted mark
+      if (kept) {
         pnl.textContent = kept.text;
         pnl.className = kept.className;
         pnl.title = kept.title;
@@ -1334,16 +1351,19 @@ function renderPositions(view) {
       pnlWatch.set(key, {cell: pnl, entry: f.price,
                          quantity: f.quantity || 1, label: held});
       paintPnlSoon();
-      joined.append(premiumSpark(key, c, held));
-    } else if (c.exit && f) {
-      const mult = /\d+(?:\.\d+)?[CP]\b/i.test(held) ? 100 : 1;
-      const dollars = (c.exit.price - f.price) * (f.quantity || 1) * mult;
-      pnl.textContent = `${dollars >= 0 ? "+" : "−"}$` +
-        `${Math.abs(dollars).toFixed(2)} realized at $${c.exit.price}`;
-      pnl.className = "val " + (dollars >= 0 ? "up" : "down");
-      joined.append(premiumSpark(key, c, held));
+    } else if (cycles.length) {
+      pnl.textContent = `${realized >= 0 ? "+" : "−"}$` +
+        `${Math.abs(realized).toFixed(2)} realized · ` +
+        `${cycles.length} cycle(s)`;
+      pnl.className = "val " + (realized >= 0 ? "up" : "down");
     }
     line.append(joined);
+
+    const sparkCell = el("td");
+    if (held) sparkCell.append(premiumSpark(key, c, held));
+    else sparkCell.textContent = "—";
+    line.append(sparkCell);
+
     const underlying = el("td", {class: "val"}, "—");
     const symbol = contractLabel((c.contracts || [])[0]
       || (c.fill || {}).contract || "").split(/\s+/)[0];
@@ -1354,11 +1374,14 @@ function renderPositions(view) {
         underlying.textContent = `${symbol} ${receipt.data.close_label} ` +
           `(${receipt.data.change_1d_pct >= 0 ? "+" : ""}` +
           `${receipt.data.change_1d_pct}% 1d)`;
-        underlying.title = `as of ${receipt.as_of} — EOD close, not a live mark`;
+        underlying.title = `as of ${receipt.as_of} — EOD close`;
       });
     }
     line.append(underlying);
-    line.append(managementCell(key, c, view));
+
+    const mgmt = el("td", {class: "mgmt"});
+    mgmt.append(tradeLifecycle(key, c, view));
+    line.append(mgmt);
     table.append(line);
   }
   section.append(table);
@@ -2354,11 +2377,11 @@ function feedSpark(tradeKey, mark) {
 }
 function premiumSpark(tradeKey, trade, label) {
   const cell = el("div", {class: "spark-cell",
-    title: "open the advanced chart"});
+    title: "open the trade's cockpit"});
   cell.addEventListener("click", () => openChartModal(tradeKey));
-  const fill = trade.fill;
+  const fill = trade.fill || {};
   const args = contractArgs(label);
-  if (!fill || args.sec_type !== "OPT") { cell.textContent = "—"; return cell; }
+  if (args.sec_type !== "OPT") { cell.textContent = "—"; return cell; }
   const kept = sparkState[tradeKey];
   if (kept) {  // a rebuilt row re-adopts the running series
     kept.holder = cell;
@@ -2387,7 +2410,7 @@ function premiumSpark(tradeKey, trade, label) {
     sparkState[tradeKey] = {
       id: tradeKey.slice(7),
       closes: since.map(bar => Number(bar.close)),
-      entry: Number(fill.price),
+      entry: Number(fill.price) || since[0].close,  // flat: first bar
       bucket: Math.floor(Date.now() / 300_000) - 1,
       holder: cell,
       liveSince: "",
@@ -3075,57 +3098,6 @@ function tradeLifecycle(key, spec, view) {
   return row;
 }
 
-function renderTrades(view) {
-  const section = el("section", {class: "full"});
-  section.append(el("h2", {}, "Trades"));
-  const grid = el("div", {id: "trades-grid"});
-  const order = {"open-simulated": 0, "watching": 1, "idea": 2, "closed": 3};
-  const entries = Object.entries(view.context)
-    .filter(([key, value]) => key.startsWith("trades/") && value)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .sort(([, a], [, b]) => (order[a?.state] ?? 4) - (order[b?.state] ?? 4));
-  for (const [key, spec] of entries) {
-    const card = el("div", {class: "card"});
-    const head = el("div", {class: "case-head"});
-    head.append(el("h3", {}, key.slice(7).replace(/-/g, " ")));
-    head.append(focusChip(key, spec));
-    head.append(el("span", {class: `state s-${spec?.state}`},
-      String(spec?.state ?? "?")));
-    card.append(head);
-    const contracts = el("div", {class: "contracts"});
-    for (const contract of spec?.contracts || [])
-      contracts.append(el("span", {}, contractLabel(contract)));
-    if (contracts.childNodes.length) card.append(contracts);
-    if (spec?.thesis) {
-      const line = String(spec.thesis);
-      card.append(el("p", {},
-        line.length > 150 ? line.slice(0, 147) + "…" : line));
-    }
-    card.append(el("div", {class: "face-stats"}, tradeStats(key, spec, view)));
-    card.append(tradeLifecycle(key, spec, view));
-    const engine = engineViolations(key, spec);
-    if (engine === null) {
-      card.append(el("p", {class: "muted"}, "checking the trade contract…"));
-    } else if (engine.length) {
-      card.append(el("p", {class: "violation"},
-        `⚠ ${engine.length} gate violation(s) — details inside`));
-    }
-    const buttons = el("div", {style: "display:flex;gap:.45rem"});
-    const details = el("button", {class: "details-btn", type: "button"},
-                       "Details");
-    details.addEventListener("click", () => openTradeModal(key));
-    const talk = el("button", {class: "details-btn primary", type: "button"});
-    talk.innerHTML = ((window.Manifold && Manifold.mark) || "◈") +
-      " AlphaLab";
-    talk.title = "talk to the desk about this trade — questions or feedback";
-    talk.addEventListener("click", () => openFocus(key));
-    buttons.append(details, talk);
-    card.append(buttons);
-    grid.append(card);
-  }
-  section.append(grid);
-  return section;
-}
 
 function contractLabel(value) {
   if (typeof value === "string") return value;
