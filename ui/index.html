@@ -1930,9 +1930,9 @@ function normalizeZones(raw) {
   for (const row of Array.isArray(raw) ? raw : []) {
     if (!row || typeof row !== "object") continue;
     const lower = Number(row.lower ?? row.low ?? row.zone_low
-      ?? row.price_low ?? row.bottom);
+      ?? row.price_low ?? row.lower_price ?? row.bottom);
     const upper = Number(row.upper ?? row.high ?? row.zone_high
-      ?? row.price_high ?? row.top);
+      ?? row.price_high ?? row.upper_price ?? row.top);
     if (!isFinite(lower) || !isFinite(upper)) continue;
     const kindText = String(row.zone_type ?? row.kind ?? row.side
       ?? row.type ?? "").toLowerCase();
