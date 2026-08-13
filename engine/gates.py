@@ -31,7 +31,7 @@ ET = ZoneInfo("America/New_York")
 TRADE_STATES = ("idea", "watching", "open-simulated", "closed")
 TRADE_FIELDS = {
     "contracts", "thesis", "evidence", "invalidation", "state",
-    "fill", "exit", "as_of",
+    "fill", "exit", "executions", "as_of",
 }
 TRADE_REQUIRED = {"contracts", "thesis", "evidence", "invalidation", "state"}
 FILL_FIELDS = {"contract", "price", "bid", "ask", "quantity", "observed_at"}
@@ -209,9 +209,50 @@ def trade_violations(trade):
                 "evidence is a list of up to 24 context keys "
                 "(findings/, quotes/, widgets/)"
             )
+    # A trade is a THESIS; executions are its history — each cycle an
+    # {contract, entry, exit} block. The thesis persists through exits
+    # (state returns to watching); only retiring the thesis closes it.
+    executions = trade.get("executions")
+    open_executions = 0
+    if "executions" in trade:
+        if not isinstance(executions, list) or len(executions) > 40:
+            violations.append("executions is a list of up to 40 cycles")
+            executions = []
+        for index, cycle in enumerate(executions or []):
+            if not isinstance(cycle, dict) or not isinstance(
+                    cycle.get("entry"), dict):
+                violations.append(
+                    f"executions[{index}] needs at least an entry block")
+                continue
+            violations.extend(fill_violations(
+                cycle["entry"], label=f"executions[{index}].entry"))
+            if cycle.get("exit") is not None:
+                violations.extend(fill_violations(
+                    cycle["exit"], label=f"executions[{index}].exit"))
+            else:
+                open_executions += 1
+            cycle_contract = str(cycle.get("contract")
+                                 or cycle["entry"].get("contract") or "")
+            if cycle_contract and contracts and not any(
+                    contracts_match(cycle_contract, item)
+                    for item in contracts):
+                violations.append(
+                    f"executions[{index}]: {cycle_contract} is not one "
+                    f"of this trade's candidate contracts")
+        if open_executions > 1:
+            violations.append(
+                "at most one execution may be open at a time")
+        if state == "open-simulated" and executions \
+                and open_executions == 0 and trade.get("fill") is None:
+            violations.append(
+                "an open-simulated trade needs an open execution")
+        if state in ("idea", "watching", "closed") and open_executions:
+            violations.append(
+                f"a {state} trade cannot hold an open execution")
     fill = trade.get("fill")
     exit_fill = trade.get("exit")
-    if state in ("open-simulated", "closed") and fill is None:
+    if state in ("open-simulated", "closed") and fill is None \
+            and not executions:
         violations.append(
             f"an {state} trade needs its receipted fill"
         )

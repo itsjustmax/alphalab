@@ -233,13 +233,46 @@ def order_recording(card_key, context, check, now):
     if not is_exit and state not in ("idea", "watching"):
         return None
     recorded = dict(trade)
+    executions = [dict(cycle) for cycle in
+                  (recorded.get("executions") or [])]
+    # legacy single-block trades adopt the executions history
+    if not executions and recorded.get("fill"):
+        executions = [{"contract": recorded["fill"].get("contract"),
+                       "entry": recorded["fill"],
+                       "exit": recorded.get("exit")}]
+    plan = (context or {}).get(f"plans/{trade_id}") or {}
+    thesis_persists = (isinstance(plan, dict)
+                       and plan.get("status") == "active"
+                       and bool(plan.get("active_at")))
     if is_exit:
-        recorded["exit"] = fill
-        recorded["state"] = "closed"
+        open_cycle = next((cycle for cycle in reversed(executions)
+                           if not cycle.get("exit")), None)
+        if open_cycle is None:
+            return None
+        open_cycle["exit"] = fill
+        open_cycle["closed_at"] = now.isoformat(timespec="seconds")
+        if thesis_persists:
+            # the trade is a THESIS: flat again, watching, the bot
+            # re-arms the next entry when its conditions return
+            recorded["state"] = "watching"
+            recorded["fill"] = None
+            recorded["exit"] = None
+        else:
+            recorded["state"] = "closed"
+            recorded["fill"] = open_cycle["entry"]
+            recorded["exit"] = fill
     else:
+        executions.append({
+            "contract": fill.get("contract"),
+            "entry": fill, "exit": None,
+            "opened_at": now.isoformat(timespec="seconds")})
         recorded["fill"] = fill
+        recorded["exit"] = None
         recorded["state"] = "open-simulated"
+    recorded["executions"] = executions
     recorded["as_of"] = now.isoformat(timespec="seconds")
+    cycle_count = len(executions)
+    closed_count = sum(1 for cycle in executions if cycle.get("exit"))
     return {
         "card_key": card_key,
         "case_key": f"trades/{trade_id}",
@@ -249,7 +282,9 @@ def order_recording(card_key, context, check, now):
             f"{check.get('action', 'buy')} {fill['quantity']} × "
             f"{check.get('contract', trade_id)} @ ${fill['price']:g} "
             f"against the live market {fill['bid']:g} × {fill['ask']:g} "
-            f"({fill['observed_at']})"),
+            f"({fill['observed_at']})"
+            + (f" · cycle {closed_count}/{cycle_count} closed, thesis "
+               f"stays live" if is_exit and thesis_persists else "")),
     }
 
 
@@ -852,6 +887,18 @@ class Pilot:
                           f"/environments/{self.environment}/say",
                           {"text": f"[plan {trade_id}] {text}"})
             return
+        if kind == "retire":
+            if trade.get("state") == "open-simulated":
+                return  # close the position first; then retire the thesis
+            closed = dict(trade)
+            closed["state"] = "closed"
+            self._api("POST", f"/environments/{self.environment}/context",
+                      {"key": f"trades/{trade_id}", "value": closed})
+            self._api("POST", f"/environments/{self.environment}/say",
+                      {"text": f"[plan {trade_id}] thesis retired — "
+                               f"{len(trade.get('executions') or [])} "
+                               f"cycle(s) complete"})
+            return
         if kind == "cancel_exit":
             if context.get(card_key) is not None:
                 self._api("POST",
@@ -862,7 +909,14 @@ class Pilot:
             return
         if kind == "arm_entry":
             if trade.get("state") not in ("idea", "watching"):
-                return  # entries arm only before a fill exists
+                return  # entries arm only while flat
+            chosen = str(action.get("contract") or "").strip()
+            if chosen:
+                if not any(gates.contracts_match(chosen, str(c))
+                           for c in (trade.get("contracts") or [])):
+                    return  # only candidate contracts express the thesis
+                if "expiration" in parse_contract_label(chosen):
+                    label = chosen
             entry_key = f"widgets/fill-{trade_id}"
             entry_price = round(float(action["price"]), 2)
             working = ((context.get(entry_key) or {})

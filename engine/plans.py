@@ -45,7 +45,7 @@ READ_ONLY_TOOLS = {
 }
 
 ALLOWED_ACTIONS = {"close", "place_exit", "cancel_exit", "arm_entry",
-                   "note"}
+                   "retire", "note"}
 
 SAFE_BUILTINS = {
     "abs": abs, "min": min, "max": max, "round": round, "len": len,
@@ -124,6 +124,11 @@ def run_decision(code, inputs, state):
                 or action.get("action") not in ALLOWED_ACTIONS:
             return None, (f"unknown action {action!r} — the vocabulary is "
                           + ", ".join(sorted(ALLOWED_ACTIONS)))
+        if action["action"] == "arm_entry" \
+                and action.get("contract") is not None \
+                and not (isinstance(action["contract"], str)
+                         and 0 < len(action["contract"]) <= 120):
+            return None, "arm_entry.contract is a candidate contract string"
         if action["action"] in ("place_exit", "arm_entry"):
             try:
                 price = float(action.get("price"))

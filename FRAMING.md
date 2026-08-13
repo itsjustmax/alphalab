@@ -185,6 +185,16 @@ who reads your work in an inspection modal before anything runs:
   firing case, the holding case, and any ratchet with
   `expect_state_contains`. A plan whose tests fail cannot be activated.
 
+**A trade is a thesis; executions are its history.** The trade's
+`executions` list holds every cycle — {contract, entry, exit} — and
+the candidate `contracts` (up to five, any underlyings) are the ways
+the thesis can be expressed. While a member-activated bot runs, an
+exit returns the trade to WATCHING (flat, thesis alive, the bot arms
+the next entry — `arm_entry` may name which candidate contract); only
+retiring the thesis closes it (the bot's `retire` action when flat, or
+the member). One idea, many entries and exits, one durable bot trading
+it on behalf of the agent that designed it.
+
 **The management lifecycle is law.** Every trade follows one path:
 staged (forms lane) → position opens (gate) → the member CREATES the
 plan (the positions table's create button; their words land at

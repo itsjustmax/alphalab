@@ -427,8 +427,38 @@ class AutopilotArchives(unittest.TestCase):
         pilot.manage_plans(context, NOW)  # once, not every pass
         self.assertEqual(len(answer["data"]["plans"]), 1)
 
+    def test_exit_with_live_bot_keeps_the_thesis_watching(self):
+        # An active, member-stamped bot means the trade is a THESIS:
+        # the exit closes the cycle, not the idea.
+        context = _live_context()
+        context["plans/nvda"]["archived_at"] = "2026-08-12T15:00:00+00:00"
+        context["widgets/fill-nvda-exit"] = {
+            "kind": "order",
+            "refresh": {"args": {"symbol": "NVDA", "sec_type": "OPT",
+                                 "expiration": "20260821", "strike": 235,
+                                 "right": "C", "price": 1.92, "quantity": 1,
+                                 "action": "sell",
+                                 "contract": "NVDA 20260821 235C"}},
+            "check": {"verdict": "fill-supported", "action": "sell",
+                      "contract": "NVDA 20260821 235C",
+                      "fill": {"contract": "NVDA 20260821 235C",
+                               "price": 1.92, "bid": 1.92, "ask": 1.95,
+                               "quantity": 1,
+                               "observed_at": NOW.isoformat(
+                                   timespec="seconds")}}}
+        pilot = _pilot(context, {})
+        pilot.record_orders(context, NOW)
+        trade = context["trades/nvda"]
+        self.assertEqual(trade["state"], "watching")
+        self.assertIsNone(trade["fill"])
+        cycles = trade["executions"]
+        self.assertEqual(len(cycles), 1)
+        self.assertEqual(cycles[0]["exit"]["price"], 1.92)
+        self.assertEqual(context["plans/nvda"]["status"], "active")
+
     def test_recorded_exit_judges_and_retires_the_plan(self):
         context = _live_context()
+        del context["plans/nvda"]["active_at"]  # no live bot: exit closes
         context["plans/nvda"]["archived_at"] = "2026-08-12T15:00:00+00:00"
         context["widgets/fill-nvda-exit"] = {
             "kind": "order",
