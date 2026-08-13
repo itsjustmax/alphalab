@@ -1473,6 +1473,15 @@ function linePlugin(values, ctx, color) {
     .attr("fill", "none").attr("stroke", color).attr("stroke-width", 1.2)
     .attr("opacity", .85);
 }
+// A level belongs on a chart only if it lives on that chart's scale:
+// a $0.50 premium level has no business on a 777 underlying chart, and
+// a 774 strike has no business on a $0.30 premium chart. Both ways.
+function onScale(value, bars) {
+  if (!isFinite(value) || !bars?.length) return false;
+  const lo = Math.min(...bars.map(b => Number(b.low ?? b.close)));
+  const hi = Math.max(...bars.map(b => Number(b.high ?? b.close)));
+  return value >= lo / 4 && value <= hi * 4;
+}
 function levelLine(ctx, price, color, text) {
   if (!isFinite(price)) return;
   const yy = ctx.y(price);
@@ -1538,28 +1547,24 @@ const CHART_PLUGINS = {
     draw: ctx => linePlugin(smaSeries(ctx.bars, 20), ctx, "#8b7cf6")},
   ema9: {id: "ema9", label: "EMA 9", appliesTo: "both",
     draw: ctx => linePlugin(emaSeries(ctx.bars, 9), ctx, "#f5a524")},
-  plan: {id: "plan", label: "plan", appliesTo: "contract",
-    levels: ctx => {
-      const hi = Math.max(...ctx.bars.map(b => b.high));
-      return [ctx.meta.entry, ctx.meta.exitLimit,
+  plan: {id: "plan", label: "plan", appliesTo: "both",
+    levels: ctx => [ctx.meta.entry, ctx.meta.exitLimit,
         ...Object.values(ctx.meta.plan?.state || {})
-          .filter(v => typeof v === "number" && v <= hi * 4)]
-        .filter(isFinite);
-    },
+          .filter(v => typeof v === "number")]
+      .filter(v => onScale(v, ctx.bars)),
     draw: ctx => {
-      levelLine(ctx, ctx.meta.entry, "var(--muted)",
-        `entry ${ctx.meta.entry}`);
-      levelLine(ctx, ctx.meta.exitLimit, "var(--up)",
-        `exit ${ctx.meta.exitLimit}`);
-      // The plan's LIVE state draws as labeled lines — but ONLY the
-      // fields living on this chart's scale: a bot's state may carry
-      // underlying prices (mapped walls), and a 775 wall on a $0.26
-      // premium chart is a different world, not a level.
-      const hi = Math.max(...ctx.bars.map(b => b.high));
+      // Every plan level draws ONLY on the chart whose scale it lives
+      // on: entry/exit/stop on the premium chart, mapped walls on the
+      // underlying — the same plugin, each level finding its home.
+      if (onScale(ctx.meta.entry, ctx.bars))
+        levelLine(ctx, ctx.meta.entry, "var(--muted)",
+          `entry ${ctx.meta.entry}`);
+      if (onScale(ctx.meta.exitLimit, ctx.bars))
+        levelLine(ctx, ctx.meta.exitLimit, "var(--up)",
+          `exit ${ctx.meta.exitLimit}`);
       for (const [name, value] of
            Object.entries(ctx.meta.plan?.state || {})) {
-        if (typeof value === "number" && isFinite(value)
-            && value <= hi * 4)
+        if (typeof value === "number" && onScale(value, ctx.bars))
           levelLine(ctx, value, "var(--warn)", `${name} ${value}`);
       }
     }},
@@ -1592,7 +1597,7 @@ function advancedCandles(holder, bars, {plugins = [], meta = {}} = {}) {
     .filter(o => (o.target || "contract") === meta.pane) : [];
   for (const overlay of paneOverlays) {
     for (const level of overlay.levels || [])
-      if (isFinite(Number(level.price))) {
+      if (onScale(Number(level.price), bars)) {
         lo = Math.min(lo, Number(level.price));
         hi = Math.max(hi, Number(level.price));
       }
@@ -1642,8 +1647,9 @@ function advancedCandles(holder, bars, {plugins = [], meta = {}} = {}) {
             ? "var(--down)" : "var(--accent)").attr("opacity", .12);
     }
     for (const level of overlay.levels || [])
-      levelLine(ctx, Number(level.price), "var(--accent)",
-        String(level.label || level.price));
+      if (onScale(Number(level.price), bars))
+        levelLine(ctx, Number(level.price), "var(--accent)",
+          String(level.label || level.price));
   }
   for (const plugin of plugins) plugin.draw(ctx);
   holder.append(svg.node());
