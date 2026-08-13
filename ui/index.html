@@ -358,6 +358,18 @@
   .custom-frame { width: 100%; border: none; border-radius: 8px;
                   background: transparent; }
 
+  .turn-receipt { margin-top: 4px; font-size: 11px; color: var(--muted);
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .receipt-key { background: var(--chip, rgba(125,125,125,.12));
+    border-radius: 4px; padding: 1px 6px; font-family: ui-monospace, monospace; }
+  .receipt-link { cursor: pointer; text-decoration: underline dotted; }
+  .working-bubble { opacity: .75; font-style: italic; }
+  .desk-msg { border-left: 2px solid var(--accent, #6a9fb5);
+    padding-left: 8px; }
+  .desk-msg > b { color: var(--accent, #6a9fb5); }
+  .working-bubble, .busy { animation: deskpulse 2s ease-in-out infinite; }
+  @keyframes deskpulse { 50% { opacity: .45; } }
+
   /* Focused conversation drawer */
   #focus-drawer { position: fixed; top: 0; right: 0; height: 100vh;
     width: min(430px, 92vw); background: var(--surface);
@@ -1010,7 +1022,17 @@ function updateLiveness() {
   parts.push(el("span", {class: age !== null && age < 30 ? "ok" : "warn"},
     age !== null ? `● desk synced ${age}s ago` : "● connecting…"));
   if (turnActive && Date.now() - turnStarted > 10 * 60000) turnActive = false;
-  if (turnActive) {
+  const working = lastView.working;
+  if (working) {
+    // Server truth: the turn survives reloads and clicking away.
+    const began = new Date(working.started_at);
+    const seconds = isNaN(began) ? null
+      : Math.max(0, Math.round((Date.now() - began.getTime()) / 1000));
+    parts.push(el("span", {class: "busy"},
+      `● the desk is working — ${working.task}` +
+      `${working.model ? ` (${working.model})` : ""}` +
+      `${seconds !== null ? ` · ${seconds}s` : ""}`));
+  } else if (turnActive) {
     const minutes = Math.floor((Date.now() - turnStarted) / 60000);
     parts.push(el("span", {class: "busy"},
       `the agent is at the desk…${minutes ? ` (${minutes}m)` : ""}`));
@@ -3037,6 +3059,40 @@ function renderWidgets(view) {
       // Charts read best at full width; an explicit size still wins.
       if (!["compact", "standard", "wide", "full"].includes(spec.size))
         card.classList.add("full");
+      // Shorthand: {"kind":"candle","chart":{"contract":"APO 20260821 145C",
+      // "bar_size":"5 mins","duration":"2 D"}} — intraday OPTION premium
+      // candles from the broker's historical lane; a scan's answer as a cell.
+      if (spec.chart?.contract && !spec.candles && !spec.series && !spec.bars) {
+        const holder = el("div");
+        holder.append(el("p", {class: "muted"},
+          `loading ${spec.chart.contract}…`));
+        card.append(holder);
+        toolData("contract_bars",
+          {...contractArgs(spec.chart.contract),
+           duration: spec.chart.duration || "2 D",
+           bar_size: spec.chart.bar_size || "5 mins",
+           return_limit: 200}, 15)
+          .then(receipt => {
+            const rows = (receipt?.ok
+              && (receipt.data?.rows || receipt.data?.bars)) || [];
+            if (!rows.length) {
+              holder.replaceChildren(el("p", {class: "violation"},
+                `⚠ ${(receipt?.gaps || []).join("; ")
+                  || receipt?.summary || "bar lane quiet"} — premium ` +
+                "history unavailable"));
+              return;
+            }
+            const filled = {...spec, kind: "candle",
+              candles: rows.map(bar => [String(bar.bar_time || bar.date)
+                  .replace("T", " ").slice(5, 16),
+                bar.open, bar.high, bar.low, bar.close])};
+            holder.replaceChildren(renderChart(filled),
+              el("div", {class: "as-of"},
+                `${spec.chart.bar_size || "5 mins"} bars · as of ` +
+                `${receipt.as_of}${(receipt.gaps || []).length
+                  ? " · " + receipt.gaps[0] : ""}`));
+          });
+      } else
       // Shorthand: {"kind":"candle","chart":{"symbol":"NVDA","days":60}} —
       // the desk fetches and refreshes the data itself; agents write facts.
       if (spec.chart?.symbol && !spec.candles && !spec.series && !spec.bars) {
@@ -3820,13 +3876,35 @@ async function fillJournal(section) {
   section.append(feed);
 }
 
+const RECEIPT_NOISE = ["~", "desk/autopilot", "desk/streams",
+  "desk/audit", "desk/member_turn", "quotes/"];
+
+function turnReceipt(turn, previousTurn) {
+  // Which keys were written between the previous room message and this
+  // one — the journal is server truth, so the receipt survives clicking
+  // away mid-turn. Writes land BEFORE the say, so the window is
+  // (previous turn, this turn + a beat].
+  const since = previousTurn ? previousTurn.timestamp_us : 0;
+  const until = turn.timestamp_us + 5_000_000;
+  const keys = [...new Set(lastJournal
+    .filter(entry => entry.timestamp_us > since &&
+      entry.timestamp_us <= until &&
+      entry.key !== undefined &&
+      !RECEIPT_NOISE.some(noise => entry.key.startsWith(noise)))
+    .map(entry => entry.key))];
+  keys.sort();
+  return keys;
+}
+
 function renderConversation(view) {
   const section = el("section");
   section.append(el("h2", {}, "Conversation"));
   const feed = el("div", {id: "feed"});
-  for (const item of view.conversation) {
-    const line = el("div", {class: item.kind === "instruction" ? "msg task" : "msg"});
-    const name = el("b", {}, item.name);
+  view.conversation.forEach((item, index) => {
+    const desk = item.as === "desk";
+    const line = el("div", {class:
+      item.kind === "instruction" ? "msg task" : desk ? "msg desk-msg" : "msg"});
+    const name = el("b", {}, desk ? "the desk" : item.name);
     line.append(name);
     if (item.kind === "instruction") {
       const target = item.to === you ? "you" : item.to_name;
@@ -3834,16 +3912,50 @@ function renderConversation(view) {
     } else {
       line.append(document.createTextNode(item.text));
     }
+    if ((desk || item.author !== you) && item.kind === "message") {
+      const keys = turnReceipt(item, view.conversation[index - 1]);
+      if (keys.length) {
+        const receipt = el("div", {class: "turn-receipt"}, "changed: ");
+        keys.slice(0, 8).forEach(key => {
+          const chip = el("span", {class: "receipt-key"}, key);
+          if (key.startsWith("trades/")) {
+            chip.classList.add("receipt-link");
+            chip.addEventListener("click", () => openChartModal(key));
+          }
+          receipt.append(chip);
+        });
+        if (keys.length > 8) receipt.append(el("span", {class: "muted"},
+          `+${keys.length - 8} more`));
+        line.append(receipt);
+      } else if (view.conversation[index - 1]?.as !== "desk" &&
+                 view.conversation[index - 1]?.author === you) {
+        // You asked; the desk replied without touching anything —
+        // say so instead of leaving the silence ambiguous.
+        line.append(el("div", {class: "turn-receipt muted"},
+          "answered in words only — nothing on the desk changed"));
+      }
+    }
     feed.append(line);
+  });
+  const last = view.conversation[view.conversation.length - 1];
+  if (view.working && (!last || last.as !== "desk")) {
+    feed.append(el("div", {class: "msg working-bubble"},
+      `● the desk heard you — ${view.working.task} running` +
+      `${view.working.model ? ` on ${view.working.model}` : ""}…`));
   }
   section.append(feed);
   queueMicrotask(() => feed.scrollTop = feed.scrollHeight);
   return section;
 }
 
+let lastJournal = [];
 async function refresh() {
   const view = await api("GET", `/environments/${envId}?token=${token}`);
   lastFetchAt = Date.now();
+  try {
+    lastJournal = await api("GET",
+      `/environments/${envId}/journal?token=${token}`);
+  } catch (error) { /* receipts degrade, the room still renders */ }
   render(view);
 }
 

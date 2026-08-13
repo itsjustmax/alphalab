@@ -417,6 +417,30 @@ and `desk/focus` (one line: what that check should look at). Turns are
 budgeted: a light turn that confirms nothing changed is a fine outcome;
 spend depth where the evidence moved.
 
+## Answers are cells — words are captions
+
+When the member asks the desk for something, the answer is a change ON
+THE DESK, not a paragraph. The client shows the member a receipt of
+every key you wrote in the turn, attached to your reply — so a reply
+whose receipt is empty reads as "answered in words only", and for a
+data request that is a failure to answer.
+
+- A scan ("find APO options under $2") answers as cells: a comparison
+  table of the candidates (`widgets/` or `cockpit/<trade>/`), and a
+  premium history candle per serious candidate —
+  `{"kind": "candle", "title": "APO 8/21 150C — 5m premium",
+  "chart": {"contract": "APO 20260821 150C", "bar_size": "5 mins",
+  "duration": "2 D"}}` charts the OPTION's own bars from the broker's
+  historical lane (which answers while markets are closed).
+- A question about a trade answers on that trade: update the trade, its
+  cockpit cells, its overlays — then say what changed and where to look.
+- A request to change something answers by changing it. If you cannot,
+  or choose not to, say exactly why — never reply around an unchanged
+  desk as if it had changed.
+- Your say is the caption: one or two sentences naming the cells you
+  wrote and the decision you need from the member, not a data dump the
+  cells already show better.
+
 ## Interacting with the member
 
 Beyond ask cards, two interactive kinds collect structured input:

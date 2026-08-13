@@ -690,7 +690,7 @@ class Pilot:
                         self._api(
                             "POST",
                             f"/environments/{self.environment}/say",
-                            {"text": f"One contract, one live trade: "
+                            {"as": "desk", "text": f"One contract, one live trade: "
                              f"{held} already lives in {existing_key} — "
                              f"amended it with the new thesis instead of "
                              f"opening a rival idea."})
@@ -899,7 +899,7 @@ class Pilot:
                 update["last_note"] = text
                 self._api("POST",
                           f"/environments/{self.environment}/say",
-                          {"text": f"[plan {trade_id}] {text}"})
+                          {"as": "desk", "text": f"[plan {trade_id}] {text}"})
             return
         if kind == "summon":
             trigger_key = f"triggers/{trade_id}"
@@ -922,7 +922,7 @@ class Pilot:
             self._api("POST", f"/environments/{self.environment}/context",
                       {"key": f"trades/{trade_id}", "value": closed})
             self._api("POST", f"/environments/{self.environment}/say",
-                      {"text": f"[plan {trade_id}] thesis retired — "
+                      {"as": "desk", "text": f"[plan {trade_id}] thesis retired — "
                                f"{len(trade.get('executions') or [])} "
                                f"cycle(s) complete"})
             return
@@ -966,7 +966,7 @@ class Pilot:
             self._api("POST", f"/environments/{self.environment}/context",
                       {"key": entry_key, "value": card})
             self._api("POST", f"/environments/{self.environment}/say",
-                      {"text": f"[plan {trade_id}] entry armed at "
+                      {"as": "desk", "text": f"[plan {trade_id}] entry armed at "
                                f"${entry_price:g} — the gate watches "
                                f"from here"})
             print(f"[{utc_now():%H:%M:%S}] plan {trade_id}: entry armed "
@@ -993,7 +993,7 @@ class Pilot:
         self._api("POST", f"/environments/{self.environment}/context",
                   {"key": card_key, "value": card})
         self._api("POST", f"/environments/{self.environment}/say",
-                  {"text": f"[plan {trade_id}] "
+                  {"as": "desk", "text": f"[plan {trade_id}] "
                    + ("closing at the market (sell limit $0.01 executes "
                       "at the bid)" if kind == "close"
                       else f"exit limit now working at ${price:g}")})
@@ -1239,7 +1239,7 @@ class Pilot:
             self._api("POST", f"/environments/{self.environment}/context",
                       {"key": recording["card_key"], "value": None})
             self._api("POST", f"/environments/{self.environment}/say",
-                      {"text": recording["summary"].capitalize() + "."})
+                      {"as": "desk", "text": recording["summary"].capitalize() + "."})
             fills = self.state.setdefault("unnarrated_fills", [])
             if recording["case_key"] not in fills:
                 fills.append(recording["case_key"])
@@ -1298,7 +1298,7 @@ class Pilot:
                 steward_model = steward.get("model") or steward_model
                 self._api(
                     "POST", f"/environments/{self.environment}/say",
-                    {"text": f"STEWARD TURN — trades/{trade_id}: "
+                    {"as": "desk", "text": f"STEWARD TURN — trades/{trade_id}: "
                      f"{trigger.get('reason')} (summoned by "
                      f"{trigger.get('from', 'bot')}). Examine this "
                      f"trade's cockpit, data programs, and plan state; "
