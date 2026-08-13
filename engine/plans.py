@@ -35,6 +35,8 @@ import json
 READ_ONLY_TOOLS = {
     "live_quote", "live_quotes", "price_summary", "daily_bars",
     "quote_snapshot", "spx_gamma", "market_context", "options_chain",
+    "contract_bars", "symbol_zones", "rss_fetch", "implied_move",
+    "short_volume",
 }
 
 ALLOWED_ACTIONS = {"close", "place_exit", "cancel_exit", "arm_entry",
