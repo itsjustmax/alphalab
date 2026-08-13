@@ -1769,16 +1769,18 @@ function drawTape(holder, rows, label, meta) {
     (market ? ` · bot market stop ${market.stop ?? "—"} / target ` +
       `${market.target ?? "—"}` : "");
 }
-function tickPane(meta) {
+function tickPane(meta, paneLabel) {
+  const label = paneLabel || meta.label;
+  const tapeMeta = {...meta, label};
   const pane = el("div", {class: "pane"});
   const head = el("div", {class: "pane-head"});
-  head.append(el("h4", {}, `${meta.label} — tape`));
+  head.append(el("h4", {}, `${label} — tape`));
   head.append(el("span", {class: "muted", style: "font-size:.72rem"},
     "every tick, persisted; ~last 200"));
   head.append(sidebarToggle("tape"));
   head.append(paneFoldChip(
-    `cockpit ${meta.tradeKey.slice(7)} · tape`,
-    () => [tapeText(meta), planText(meta)].join("\n")));
+    `cockpit ${meta.tradeKey.slice(7)} · tape ${label}`,
+    () => [tapeText(tapeMeta), planText(meta)].join("\n")));
   pane.append(head);
   const body = el("div", {class: "pane-body"});
   const chart = el("div", {class: "pane-chart"});
@@ -1786,14 +1788,14 @@ function tickPane(meta) {
   if (openSidebars.has("tape"))
     body.append(pluginSidebar("tape", meta, null));
   pane.append(body);
-  if (tapeMemory[meta.label])
-    drawTape(chart, tapeMemory[meta.label], meta.label, meta);
+  if (tapeMemory[label])
+    drawTape(chart, tapeMemory[label], label, tapeMeta);
   else chart.textContent = "…";
   // Preferred lane: the tick relay (localhost:8643) — a persistent
   // process reading Timescale at 10Hz and PUSHING each new tick over
   // SSE within ~100ms of persistence. Fallback: 5s tool polling.
-  const contract = contractArgs(meta.label);
-  let buffer = (tapeMemory[meta.label] || []).slice();  // newest first
+  const contract = contractArgs(label);
+  let buffer = (tapeMemory[label] || []).slice();  // newest first
   let drawQueued = false;
   const paint = () => {
     if (drawQueued) return;
@@ -1801,7 +1803,7 @@ function tickPane(meta) {
     requestAnimationFrame(() => {
       drawQueued = false;
       if (chart.isConnected && buffer.length)
-        drawTape(chart, buffer, meta.label, meta);
+        drawTape(chart, buffer, label, tapeMeta);
     });
   };
   const relayParams = new URLSearchParams({...contract, token});
@@ -1820,7 +1822,7 @@ function tickPane(meta) {
         buffer.unshift(payload);
         if (buffer.length > 300) buffer.length = 300;
       }
-      tapeMemory[meta.label] = buffer;
+      tapeMemory[label] = buffer;
       head.querySelector(".muted").textContent =
         "live push · every tick, persisted";
       paint();
@@ -1837,9 +1839,9 @@ function tickPane(meta) {
         const rows = reply.result?.data?.rows || [];
         if (rows.length) {
           buffer = rows;
-          tapeMemory[meta.label] = rows;
+          tapeMemory[label] = rows;
           paint();
-        } else if (!tapeMemory[meta.label]) {
+        } else if (!tapeMemory[label]) {
           chart.replaceChildren(el("p", {class: "muted"},
             "no persisted ticks yet — the stream is warming"));
         }
@@ -2166,7 +2168,7 @@ function cockpitStrip(meta) {
       const typed = el("input", {type: "text",
         placeholder: `type "${tradeId}" to arm`});
       const cap = el("input", {type: "text", placeholder: "max $ / order",
-        value: "400"});
+        value: "100"});
       const go = el("button", {type: "button", class: "desk-rename"},
         "confirm arm");
       const holder = el("span", {class: "arm-inline"});
@@ -2245,10 +2247,14 @@ function renderChartModal() {
       `${line.name}: ${String(line.text).slice(0, 150)}`));
   const thoughtsMount = el("div", {id: "thoughts-mount"});
   thoughts.append(thoughtsMount);
+  const candidates = [...new Set((trade.contracts || [])
+    .map(contractLabel)
+    .filter(x => x && contractArgs(x).sec_type === "OPT"))].slice(0, 3);
+  if (!candidates.length && meta.label) candidates.push(meta.label);
   body.replaceChildren(
     cockpitStrip(meta),
     thoughts,
-    tickPane(meta),
+    ...candidates.map(candidate => tickPane(meta, candidate)),
     chartPane("contract", meta, state.contract),
     chartPane("underlying", meta, state.underlying));
   // Cockpit cells: this trade's OWN micro-dashboard. Any entry at
