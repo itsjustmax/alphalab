@@ -1540,7 +1540,9 @@ function tickPane(meta) {
     } catch { /* keep the last tape through blips */ }
     setTimeout(crawl, 5000);
   };
-  crawl();
+  // first crawl AFTER the pane mounts — an isConnected guard checked
+  // during construction would end the loop before it began
+  setTimeout(crawl, 100);
   return pane;
 }
 function chartPane(kind, meta, state) {
