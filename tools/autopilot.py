@@ -695,11 +695,23 @@ class Pilot:
                 program.get("code") or "", inputs, plan.get("state"))
             update = dict(plan)
             update["last_run"] = now.isoformat(timespec="seconds")
+            closing = not error and any(
+                a.get("action") == "close" for a in result["actions"])
+            if not error and trade.get("state") == "open-simulated" \
+                    and not result.get("market") and not closing:
+                error = ("the bot contract: an open position's plan must "
+                         "answer market {stop, target} — where it is a "
+                         "seller on both sides, even far from price "
+                         "(a close action exempts the pass)")
             if error:
                 update["last_error"] = error
             else:
                 update.pop("last_error", None)
                 update["state"] = result["state"]
+                if result.get("market"):
+                    update["market"] = result["market"]
+                    self._maintain_bracket(trade_id, trade,
+                                           result["market"], context)
                 for action in result["actions"]:
                     self._apply_plan_action(trade_id, trade, action,
                                             context, update)
@@ -718,6 +730,53 @@ class Pilot:
             else:
                 ran += 1
         return ran
+
+    def _maintain_bracket(self, trade_id, trade, market, context):
+        """The bot's market becomes the working bracket order.
+
+        One card carries both legs: the target as the sell limit, the
+        stop underneath. The gate fills whichever leg the market
+        touches; deterministic executors (this pass, the card's own
+        refresh, and the tick relay) act on the same levels.
+        """
+
+        if trade.get("state") != "open-simulated":
+            return
+        stop = market.get("stop")
+        target = market.get("target")
+        if stop is None or target is None:
+            return
+        card_key = f"widgets/fill-{trade_id}-exit"
+        label = str((trade.get("fill") or {}).get("contract")
+                    or (trade.get("contracts") or [trade_id])[0])
+        if "expiration" not in parse_contract_label(label):
+            for candidate in (trade.get("contracts") or []):
+                if "expiration" in parse_contract_label(str(candidate)):
+                    label = str(candidate)
+                    break
+        existing = ((context.get(card_key) or {})
+                    .get("refresh") or {}).get("args") or {}
+        if existing.get("price") == round(float(target), 2) \
+                and existing.get("stop") == round(float(stop), 2):
+            return  # the bracket already works these exact levels
+        quantity = int((trade.get("fill") or {}).get("quantity") or 1)
+        card = {"kind": "order",
+                "title": f"Bracket — {label} "
+                         f"(stop {stop:g} / target {target:g})",
+                "plan": f"plans/{trade_id}",
+                "refresh": {"tool": "fill_watch",
+                            "args": {**parse_contract_label(label),
+                                     "price": round(float(target), 2),
+                                     "stop": round(float(stop), 2),
+                                     "quantity": quantity,
+                                     "action": "sell",
+                                     "contract": label},
+                            "minutes": 2, "value_path": "result.data",
+                            "into": "check"}}
+        self._api("POST", f"/environments/{self.environment}/context",
+                  {"key": card_key, "value": card})
+        print(f"[{utc_now():%H:%M:%S}] bracket {trade_id}: "
+              f"stop {stop:g} / target {target:g}", flush=True)
 
     def _apply_plan_action(self, trade_id, trade, action, context, update):
         """One bounded plan action → the desk's existing primitives."""

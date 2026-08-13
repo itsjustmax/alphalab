@@ -99,7 +99,9 @@ def manage(inputs, state):
     mark = inputs['mark']['quote']['bid']
     if mark >= entry * 2:
         return {'actions': [{'action': 'close'}], 'state': state}
-    return {'actions': [], 'state': state}
+    return {'actions': [], 'state': state,
+            'market': {'stop': round(entry * 0.5, 2),
+                       'target': round(entry * 2, 2)}}
 """
 
 RATCHET_TRAIL = """
@@ -357,7 +359,8 @@ class AutopilotPlans(unittest.TestCase):
     def test_notes_do_not_repeat(self):
         code = ("def manage(inputs, state):\n"
                 " return {'actions': [{'action': 'note',"
-                " 'text': 'watching'}], 'state': state}")
+                " 'text': 'watching'}], 'state': state,"
+                " 'market': {'stop': 0.5, 'target': 1.92}}")
         context = _live_context(code=code)
         pilot = _pilot(context, {"live_quote":
                                  {"quote": {"bid": 1.0, "ask": 1.1}}})
@@ -570,3 +573,46 @@ def test_agent_written_active_without_member_stamp_never_runs():
                              {"quote": {"bid": 9.99, "ask": 10.0}}})
     assert pilot.manage_plans(context, NOW) == 0
     assert "widgets/fill-nvda-exit" not in context
+
+
+BRACKET_BOT = """
+def manage(inputs, state):
+    entry = inputs['position']['entry']
+    high = max(state.get('high', entry), inputs['mark']['quote']['bid'])
+    state['high'] = high
+    return {'actions': [], 'state': state,
+            'market': {'stop': round(max(entry * 0.5, high - 0.5), 2),
+                       'target': round(entry * 2, 2)}}
+"""
+
+
+def test_the_bot_contract_maintains_the_bracket():
+    context = _live_context(code=BRACKET_BOT)
+    pilot = _pilot(context, {"live_quote":
+                             {"quote": {"bid": 1.52, "ask": 1.55}}})
+    ran = pilot.manage_plans(context, NOW)
+    assert ran == 1
+    plan = context["plans/nvda"]
+    assert plan["market"] == {"stop": 1.02, "target": 1.92}
+    card = context["widgets/fill-nvda-exit"]
+    args = card["refresh"]["args"]
+    assert args["price"] == 1.92 and args["stop"] == 1.02
+    assert "Bracket" in card["title"]
+
+
+def test_an_open_position_without_a_market_is_a_named_breach():
+    context = _live_context(  # returns actions only, no market
+        code="def manage(inputs, state):\n"
+             " return {'actions': [], 'state': state}")
+    pilot = _pilot(context, {"live_quote":
+                             {"quote": {"bid": 1.5, "ask": 1.55}}})
+    pilot.manage_plans(context, NOW)
+    assert "bot contract" in context["plans/nvda"]["last_error"]
+
+
+def test_inverted_market_is_refused():
+    result, error = plans.run_decision(
+        "def manage(inputs, state):\n"
+        " return {'actions': [], 'state': state,"
+        " 'market': {'stop': 2.0, 'target': 1.0}}", {}, {})
+    assert result is None and "below" in error

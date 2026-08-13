@@ -712,3 +712,44 @@ def test_rss_fetch_parses_rss_and_atom_and_refuses_local():
 
     refused = web.rss_fetch({"url": "http://localhost:8642/feed"})
     assert not refused["ok"] and "refused" in refused["summary"]
+
+
+def test_bracket_sell_fills_on_either_leg():
+    import datetime
+    import gates
+
+    now = datetime.datetime(2026, 8, 13, 15, 0,
+                            tzinfo=datetime.timezone.utc)
+    observed = now.astimezone(gates.ET).isoformat(timespec="seconds")
+    base = {"symbol": "NVDA", "sec_type": "OPT", "expiration": "20260821",
+            "strike": 235, "right": "C", "action": "sell",
+            "quantity": 1, "contract": "NVDA 20260821 235C",
+            "price": 1.92, "stop": 1.10}
+
+    def check(bid, ask):
+        _, parsed = gates._parse_order(base, "fill_watch")
+        return gates._gate_quote(parsed,
+            {"bid": bid, "ask": ask, "observed_at": observed}, now)
+
+    resting = check(1.50, 1.53)   # inside the bracket: rests
+    assert resting["data"]["verdict"] == "refused"
+    assert "bracket rests" in resting["summary"]
+
+    target = check(1.95, 1.98)    # bid through the target: fill at bid
+    assert target["data"]["verdict"] == "fill-supported"
+    assert target["data"]["leg"] == "target"
+    assert target["data"]["fill"]["price"] == 1.95
+
+    stopped = check(1.05, 1.08)   # bid through the stop: fill at bid
+    assert stopped["data"]["verdict"] == "fill-supported"
+    assert stopped["data"]["leg"] == "stop"
+    assert stopped["data"]["fill"]["price"] == 1.05
+
+
+def test_stop_leg_is_sell_only():
+    import gates
+
+    refusal, parsed = gates._parse_order(
+        {"symbol": "NVDA", "action": "buy", "price": 2.0,
+         "quantity": 1, "stop": 1.0}, "fill_watch")
+    assert parsed is None and "sell" in refusal["summary"]

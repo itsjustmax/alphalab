@@ -185,6 +185,18 @@ who reads your work in an inspection modal before anything runs:
   firing case, the holding case, and any ratchet with
   `expect_state_contains`. A plan whose tests fail cannot be activated.
 
+**The bot contract.** You do not manage positions live — you write a
+BOT that does: the plan's `manage()` is that bot, and while its
+position is OPEN it must answer a `market`: {"stop": price, "target":
+price} — where it is a seller on both sides, even far from the current
+price (a close action exempts the pass). Those two levels ARE the
+working orders: the runner maintains the bracket order from them, the
+tick executor acts on them within half a second of a crossing, and the
+tape draws them so the member watches the bot's market move. Modulate
+them as fast as your logic warrants — trail the stop, walk the target
+— but never leave an open position without both. Feed the bot ticks
+via the `tick_tape` input for microstructure-aware logic.
+
 Plans catch entries too: `arm_entry` (price, quantity?) places a
 standing entry order on a trade still in idea/watching — the plan is
 the watcher the entry condition needs, and active plans run on every

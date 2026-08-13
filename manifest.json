@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.18.0",
+  "version": "2.19.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -141,6 +141,23 @@
         "python3",
         "tools/run.py",
         "symbol_zones"
+      ]
+    },
+    {
+      "name": "tick_tape",
+      "description": "The freshest persisted ticks for one contract — read-only (action is always latest). The bot's microstructure input. data: {rows: [{bid, ask, last, quote_time}...]} newest first.",
+      "args": {
+        "symbol": "ticker",
+        "sec_type": "OPT/STK/IND",
+        "expiration": "YYYYMMDD (options)",
+        "strike": "strike (options)",
+        "right": "C or P (options)",
+        "limit": "ticks (default 40)"
+      },
+      "command": [
+        "python3",
+        "tools/run.py",
+        "tick_tape"
       ]
     },
     {

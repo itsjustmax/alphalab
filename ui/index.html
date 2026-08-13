@@ -1460,7 +1460,7 @@ const INDEXES = new Set(["SPX", "XSP", "NDX", "VIX", "DJI", "RUT"]);
 // this pane replays the freshest ~200 of them: bid/ask as a spread
 // band, last as the crawling line. Refreshes every 5s while open.
 const tapeMemory = {};
-function drawTape(holder, rows, label) {
+function drawTape(holder, rows, label, meta) {
   if (!rows.length) return;
   const ticks = [...rows].reverse();  // lane answers newest first
   const w = 960, h = 150, pad = {l: 8, r: 52, t: 8, b: 18};
@@ -1507,9 +1507,38 @@ function drawTape(holder, rows, label) {
       .attr("text-anchor", anchor).attr("fill", "var(--muted)")
       .attr("font-size", "9px")
       .text(String(ticks[index].quote_time).slice(11, 19));
+  // The bot's market: where it is a seller on both sides. In-range
+  // levels draw as lines; far levels pin to the edge as badges — the
+  // bracket is ALWAYS visible, exactly as the contract demands.
+  const market = meta
+    && lastView?.context?.[`plans/${meta.tradeKey.slice(7)}`]?.market;
+  if (market) {
+    for (const [field, color] of [["stop", "var(--down)"],
+                                  ["target", "var(--up)"],
+                                  ["buy", "var(--accent)"]]) {
+      const price = Number(market[field]);
+      if (!isFinite(price)) continue;
+      const yy = y(price);
+      if (yy >= 0 && yy <= ih) {
+        g.append("line").attr("x1", 0).attr("x2", iw)
+          .attr("y1", yy).attr("y2", yy).attr("stroke", color)
+          .attr("stroke-dasharray", "5 4").attr("stroke-width", 1.2);
+        g.append("text").attr("x", 4).attr("y", yy - 4)
+          .attr("fill", color).attr("font-size", "10px")
+          .text(`${field} ${price}`);
+      } else {
+        const edge = yy < 0 ? 10 : ih - 4;
+        g.append("text").attr("x", 4).attr("y", edge)
+          .attr("fill", color).attr("font-size", "10px")
+          .text(`${field} ${price} ${yy < 0 ? "↑" : "↓"}`);
+      }
+    }
+  }
   holder.replaceChildren(svg.node());
   holder.title = `${label} — ${ticks.length} persisted ticks, ` +
-    `spread band bid×ask, line = last`;
+    `spread band bid×ask, line = last` +
+    (market ? ` · bot market stop ${market.stop ?? "—"} / target ` +
+      `${market.target ?? "—"}` : "");
 }
 function tickPane(meta) {
   const pane = el("div", {class: "pane"});
@@ -1521,7 +1550,7 @@ function tickPane(meta) {
   const chart = el("div", {class: "pane-chart"});
   pane.append(chart);
   if (tapeMemory[meta.label])
-    drawTape(chart, tapeMemory[meta.label], meta.label);
+    drawTape(chart, tapeMemory[meta.label], meta.label, meta);
   else chart.textContent = "…";
   // Preferred lane: the tick relay (localhost:8643) — a persistent
   // process reading Timescale at 10Hz and PUSHING each new tick over
@@ -1535,7 +1564,7 @@ function tickPane(meta) {
     requestAnimationFrame(() => {
       drawQueued = false;
       if (chart.isConnected && buffer.length)
-        drawTape(chart, buffer, meta.label);
+        drawTape(chart, buffer, meta.label, meta);
     });
   };
   const relayParams = new URLSearchParams({...contract, token});

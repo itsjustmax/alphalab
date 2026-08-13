@@ -144,6 +144,12 @@ OPERATIONS = {
     "live_quote": gates.live_quote,
     "web_fetch": web.web_fetch,
     "rss_fetch": web.rss_fetch,
+    "tick_tape": lambda arguments: bridge.invoke(
+        "ibkr.market_stream",
+        {**{k: v for k, v in (arguments or {}).items()
+            if k in ("symbol", "sec_type", "expiration", "strike",
+                     "right", "limit")},
+         "action": "latest"}),
     "live_quotes": gates.live_quotes,
     "form_check": forms.form_check,
     "plan_check": plans.plan_check,

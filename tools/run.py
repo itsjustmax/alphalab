@@ -25,7 +25,8 @@ sys.path.insert(0, os.path.abspath(engine_home))
 
 INLINE = {"daily_bars", "price_summary", "capabilities", "trade_check",
           "case_check", "fill_check", "fill_watch", "live_quote", "live_quotes", "web_fetch", "form_check",
-          "plan_check", "plan_library", "rss_fetch"}
+          "plan_check", "plan_library", "rss_fetch",
+          "tick_tape"}
 
 # Manifest tool names alias their engine operations, so a direct caller
 # using either name reaches the same place (agents tripped on this).

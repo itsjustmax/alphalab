@@ -18,7 +18,12 @@ condition, anything. An agent compiles that into a plan at
 
 The decision function is pure: it sees the gathered inputs plus
 ``position`` and ``now``, keeps its own ``state`` (watermarks, ratchet
-levels), and may only answer bounded actions — close (a marketable exit
+levels), and — this is the bot contract — while the position is OPEN it
+MUST answer a ``market``: {"stop": price, "target": price, "buy"?} —
+where the bot is a seller on both sides, even far from price. Those
+levels ARE the working orders (the bracket), modulated as fast as the
+bot likes; deterministic executors act on them tick by tick. It may
+also answer bounded actions — close (a marketable exit
 through the same market gate as everything else), place_exit (a resting
 limit), cancel_exit, arm_entry (a standing entry order for a trade not
 yet filled — plans catch entries, not only manage exits), note. It
@@ -36,7 +41,7 @@ READ_ONLY_TOOLS = {
     "live_quote", "live_quotes", "price_summary", "daily_bars",
     "quote_snapshot", "spx_gamma", "market_context", "options_chain",
     "contract_bars", "symbol_zones", "rss_fetch", "implied_move",
-    "short_volume",
+    "short_volume", "tick_tape",
 }
 
 ALLOWED_ACTIONS = {"close", "place_exit", "cancel_exit", "arm_entry",
@@ -128,6 +133,25 @@ def run_decision(code, inputs, state):
                 return None, f"{action['action']} price is non-negative"
         if action["action"] == "note" and not str(action.get("text") or "").strip():
             return None, "a note carries text"
+    market = result.get("market")
+    if market is not None:
+        if not isinstance(market, dict):
+            return None, "market is an object: {stop, target, buy?}"
+        for field in ("stop", "target", "buy"):
+            raw = market.get(field)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return None, f"market.{field} must be numeric, got {raw!r}"
+            if value < 0:
+                return None, f"market.{field} is non-negative"
+        stop_v, target_v = market.get("stop"), market.get("target")
+        if stop_v is not None and target_v is not None \
+                and float(stop_v) >= float(target_v):
+            return None, (f"market.stop ({stop_v}) must sit below "
+                          f"market.target ({target_v})")
     new_state = result.get("state") or {}
     try:
         encoded = json.dumps(new_state)
@@ -135,7 +159,12 @@ def run_decision(code, inputs, state):
         return None, "state must be plain JSON"
     if len(encoded.encode("utf-8")) > MAX_STATE_BYTES:
         return None, f"state stays under {MAX_STATE_BYTES} bytes"
-    return {"actions": actions, "state": new_state}, None
+    answer = {"actions": actions, "state": new_state}
+    if market is not None:
+        answer["market"] = {k: float(market[k]) for k in
+                            ("stop", "target", "buy")
+                            if market.get(k) is not None}
+    return answer, None
 
 
 def run_tests(program):

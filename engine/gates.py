@@ -331,8 +331,16 @@ def _parse_order(arguments, tool):
         str(arguments.get(field) or "").strip()
         for field in ("symbol", "expiration", "strike", "right")
     ).strip() or symbol
-    return None, {"symbol": symbol, "action": action, "price": price,
-                  "quantity": quantity, "contract": contract}
+    stop = _number(arguments.get("stop"))
+    if stop is not None and (stop < 0 or action != "sell"):
+        return _refused("a stop leg is a non-negative price on a sell",
+                        [f"stop {arguments.get('stop')!r} with "
+                         f"action {action!r}"]), None
+    parsed = {"symbol": symbol, "action": action, "price": price,
+              "quantity": quantity, "contract": contract}
+    if stop is not None:
+        parsed["stop"] = stop
+    return None, parsed
 
 
 INDEX_SYMBOLS = {"SPX", "XSP", "NDX", "VIX", "DJI", "RUT"}
@@ -392,6 +400,8 @@ def _gate_quote(parsed, quote, now, extra=None):
     # a buy executes AT the ask the moment the limit reaches it (price
     # improvement included); a limit inside the spread RESTS until the
     # market comes to it. Sells mirror against the bid.
+    stop = _number(parsed.get("stop"))
+    leg = None
     if action == "buy":
         if price < ask:
             return _refused(
@@ -402,14 +412,29 @@ def _gate_quote(parsed, quote, now, extra=None):
             )
         executed = ask
     else:
-        if price > bid:
+        # A sell may be a BRACKET: the target limit above, the stop
+        # below. Either leg the market touches is a fill at the bid —
+        # the bot publishes the levels, the gate executes them.
+        if stop is not None and bid <= stop:
+            executed = bid
+            leg = "stop"
+        elif price <= bid:
+            executed = bid
+            leg = "target"
+        else:
+            reasons = [f"the live bid is {bid:g} as of {observed_at}; "
+                       f"the sell limit ${price:g} rests until the bid "
+                       f"comes to it"]
+            if stop is not None:
+                reasons.append(f"the stop at ${stop:g} rests until the "
+                               f"bid falls to it")
             return _refused(
-                f"{contract}: sell limit ${price:g} rests above the bid "
-                f"({bid:g} × {ask:g})",
-                [f"the live bid is {bid:g} as of {observed_at}; a sell "
-                 f"limit of ${price:g} rests until the bid comes to it"],
+                f"{contract}: bracket rests — bid {bid:g} inside "
+                f"(stop {stop:g} / target {price:g})" if stop is not None
+                else f"{contract}: sell limit ${price:g} rests above "
+                     f"the bid ({bid:g} × {ask:g})",
+                reasons,
             )
-        executed = bid
     clock_text = clock.astimezone(ET).strftime("%H:%M:%S ET · %Y-%m-%d")
     data = {
         # One canonical fill block, ready to record verbatim. The price
@@ -418,6 +443,7 @@ def _gate_quote(parsed, quote, now, extra=None):
         "contract": contract,
         "action": action,
         "limit": price,
+        "leg": leg,
         "fill": {
             "contract": contract, "price": executed, "bid": bid, "ask": ask,
             "quantity": quantity, "observed_at": observed_at,
