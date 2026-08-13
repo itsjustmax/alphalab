@@ -260,6 +260,8 @@
   .tf-chip, .plugin-chip { background: var(--surface-2); color: var(--muted);
     border: 1px solid var(--border); border-radius: 7px; font: inherit;
     font-size: .74rem; padding: .25rem .6rem; cursor: pointer; }
+  .plugin-chip.plus { font-weight: 700; color: var(--accent);
+    border-color: var(--accent); border-style: dashed; }
   .tf-chip.on, .plugin-chip.on { color: var(--text);
     border-color: var(--accent); }
   .pane-chart { margin-top: .5rem; min-height: 120px; }
@@ -1510,6 +1512,33 @@ function drawTape(holder, rows, label, meta) {
   // The bot's market: where it is a seller on both sides. In-range
   // levels draw as lines; far levels pin to the edge as badges — the
   // bracket is ALWAYS visible, exactly as the contract demands.
+  if (meta) {
+    for (const overlay of overlayEntries(meta)) {
+      if ((overlay.target || "contract") !== "tape") continue;
+      for (const band of overlay.bands || []) {
+        const top = Math.max(0, Math.min(ih, y(Number(band.upper))));
+        const bottom = Math.max(0, Math.min(ih, y(Number(band.lower))));
+        if (bottom - top >= 1)
+          g.insert("rect", ":first-child").attr("x", 0).attr("width", iw)
+            .attr("y", top).attr("height", bottom - top)
+            .attr("fill", /supply|resist/.test(String(band.side || ""))
+              ? "var(--down)" : "var(--accent)").attr("opacity", .12);
+      }
+      for (const level of overlay.levels || []) {
+        const price = Number(level.price);
+        if (!isFinite(price)) continue;
+        const yy = y(price);
+        if (yy < 0 || yy > ih) continue;
+        g.append("line").attr("x1", 0).attr("x2", iw)
+          .attr("y1", yy).attr("y2", yy)
+          .attr("stroke", "var(--accent)")
+          .attr("stroke-dasharray", "5 4").attr("stroke-width", 1);
+        g.append("text").attr("x", 4).attr("y", yy - 4)
+          .attr("fill", "var(--accent)").attr("font-size", "10px")
+          .text(String(level.label || price));
+      }
+    }
+  }
   const market = meta
     && lastView?.context?.[`plans/${meta.tradeKey.slice(7)}`]?.market;
   if (market) {
@@ -1546,6 +1575,7 @@ function tickPane(meta) {
   head.append(el("h4", {}, `${meta.label} — tape`));
   head.append(el("span", {class: "muted", style: "font-size:.72rem"},
     "every tick, persisted; ~last 200"));
+  pluginLibraryChips(head, "tape", meta);
   pane.append(head);
   const chart = el("div", {class: "pane-chart"});
   pane.append(chart);
@@ -1616,6 +1646,75 @@ function tickPane(meta) {
   if (buffer.length) paint();
   return pane;
 }
+function substituteMeta(node, meta) {
+  if (Array.isArray(node)) return node.map(item => substituteMeta(item, meta));
+  if (node && typeof node === "object") {
+    if ("$" in node) {
+      const args = contractArgs(meta.label);
+      return {symbol: args.symbol, expiration: args.expiration,
+              strike: args.strike, right: args.right,
+              label: meta.label, contract: meta.label,
+              tradeKey: meta.tradeKey}[node["$"]] ?? null;
+    }
+    return Object.fromEntries(Object.entries(node)
+      .map(([k, v]) => [k, substituteMeta(v, meta)]));
+  }
+  return node;
+}
+function libraryPlugins(pane) {
+  return Object.entries(lastView?.context || {})
+    .filter(([key, value]) => key.startsWith("plugins/") && value
+      && (value.appliesTo === pane || value.appliesTo === "both"))
+    .map(([key, value]) => ({slug: key.slice(8), ...value}));
+}
+function libraryInstanceKey(meta, slug) {
+  return `overlays/${meta.tradeKey.slice(7)}-lib-${slug}`;
+}
+async function toggleLibraryPlugin(meta, pane, plugin) {
+  const key = libraryInstanceKey(meta, plugin.slug);
+  const existing = lastView?.context?.[key];
+  let value = null;
+  if (!existing) {
+    value = {target: pane, library: plugin.slug};
+    for (const field of ["levels", "bands", "clocks"])
+      if (plugin.overlay?.[field])
+        value[field] = substituteMeta(plugin.overlay[field], meta);
+    if (plugin.program) {
+      value.program = substituteMeta(plugin.program, meta);
+      value.minutes = plugin.minutes || 10;
+    }
+  }
+  await api("POST", `/environments/${envId}/context`, {key, value});
+  if (lastView) {
+    if (value) lastView.context[key] = value;
+    else delete lastView.context[key];
+  }
+  renderChartModal();
+}
+function pluginLibraryChips(head, pane, meta) {
+  for (const plugin of libraryPlugins(pane)) {
+    const on = !!lastView?.context?.[libraryInstanceKey(meta, plugin.slug)];
+    const chip = el("button", {type: "button",
+      class: "plugin-chip" + (on ? " on" : ""),
+      title: plugin.describe || `library plugin — ${plugin.slug}`},
+      plugin.label || plugin.slug);
+    chip.addEventListener("click", () =>
+      toggleLibraryPlugin(meta, pane, plugin));
+    head.append(chip);
+  }
+  const plus = el("button", {type: "button", class: "plugin-chip plus",
+    title: "design a new plugin for this chart — the agent builds it " +
+           "into the library"}, "＋");
+  plus.addEventListener("click", () => {
+    const input = document.querySelector("#overlay-composer input");
+    if (input) {
+      input.value = `new ${pane} plugin: `;
+      input.focus();
+      input.scrollIntoView({behavior: "smooth", block: "center"});
+    }
+  });
+  head.append(plus);
+}
 function chartPane(kind, meta, state) {
   const pane = el("div", {class: "pane"});
   const head = el("div", {class: "pane-head"});
@@ -1645,6 +1744,7 @@ function chartPane(kind, meta, state) {
     });
     head.append(chip);
   }
+  pluginLibraryChips(head, kind, meta);
   pane.append(head);
   const chart = el("div", {class: "pane-chart"});
   pane.append(chart);
@@ -1784,7 +1884,11 @@ function renderChartModal() {
         "it on cadence. (2) cockpit/" + state.tradeKey.slice(7) +
         "/<slug> = this trade's own cells, same card grammar as the " +
         "desk (live quotes for candidate contracts, tables, custom_d3, " +
-        "news). (3) if the member describes how to manage the " +
+        "news). If the message starts 'new <pane> plugin:', design a " +
+        "REUSABLE library plugin at plugins/<slug> {label, describe, " +
+        "appliesTo, overlay|program with {\"$\": \"symbol\"}-style " +
+        "placeholders} — the member toggles it onto charts. " +
+        "(3) if the member describes how to manage the " +
         "position, write plans/" + state.tradeKey.slice(7) +
         " {plan: their words, status: requested} and compile it to a " +
         "draft program this turn. Member says: ",

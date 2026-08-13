@@ -221,6 +221,19 @@ option-volume entry signals, whatever the trade needs — the
 computation is free, the output shape is law, and errors land on the
 entry as `last_error`.
 
+**The plugin library.** `plugins/<slug>` entries are reusable chart
+plugins the member can toggle onto any trade's cockpit panes: {label,
+describe, appliesTo: "contract"|"underlying"|"tape"|"both", overlay:
+{levels/bands/clocks} for static designs, or program: {inputs, code} +
+minutes for computed ones — program args may carry {"$": "symbol"} /
+"expiration" / "strike" / "right" / "contract" placeholders, filled
+per trade when the member applies the plugin. Design one when the
+member presses ＋ on a pane (their message starts "new <pane>
+plugin:"): write the plugins/<slug> entry, say what it does, and let
+them toggle it on. Applying instantiates overlays/<trade>-lib-<slug>;
+toggling off retires the instance. Library plugins are designed once,
+used everywhere — the desk's own charting vocabulary, grown by use.
+
 **Chart overlays are data, not code.** The member's trade cockpit
 (click a position's sparkline) renders `overlays/<trade-id>-<slug>`
 entries under its "custom" plugin: {target: "contract"|"underlying",
