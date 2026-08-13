@@ -177,8 +177,123 @@ def _in_process_invoke(operation, arguments, timeout=None):
                    surface="tick-relay-executor")
 
 
+def _harness_risk():
+    import sys
+    engine_dir = str(Path(__file__).resolve().parent.parent / "engine")
+    if engine_dir not in sys.path:
+        sys.path.insert(0, engine_dir)
+    import risk
+    return risk
+
+
+def live_orders(brackets, risk_mod, now_iso):
+    """The live rail: armed brackets become REAL working orders.
+
+    Deterministic, layered, fail-closed: the desk-side risk layer
+    (risk.json + per-trade arming) decides here; the engine's own gate
+    (env master switch, account allowlist, options-only, caps, daily
+    fail-closed budget, confirmation phrase) decides again inside the
+    operation. When any layer says no — including live_enabled: false,
+    the shipped default — the intent is journaled as dry_run so the
+    whole chain is rehearsed without money. Stop changes ride
+    ibkr.orders.modify_stop: a real stop, really moved.
+    """
+
+    standing = risk_mod.load_risk()
+    armed = risk_mod.load_armed()
+    today = now_iso[:10]
+    journal = risk_mod.journal_today(today)
+    placed = {(row.get("trade_id"), row.get("kind")): row
+              for row in journal if row.get("status") in
+              ("submitted", "dry_run")}
+    for (env_id, key), args in brackets.items():
+        trade_id = key[len("widgets/fill-"):].replace("-exit", "")
+        is_exit_bracket = key.endswith("-exit")
+        order = {
+            "trade_id": trade_id, "kind": "bracket" if is_exit_bracket
+            else "entry",
+            "symbol": args.get("symbol"), "sec_type": "OPT",
+            "right": args.get("right"),
+            "price": args.get("price"), "quantity": args.get("quantity"),
+        }
+        previous = placed.get((trade_id, order["kind"]))
+        if previous and previous.get("stop") == args.get("stop") \
+                and previous.get("price") == args.get("price"):
+            continue  # already working these exact levels
+        refusals = risk_mod.order_refusals(order, standing, armed, journal)
+        record = {"at": now_iso, "trade_id": trade_id,
+                  "kind": order["kind"], "symbol": order["symbol"],
+                  "price": order["price"], "stop": args.get("stop"),
+                  "quantity": order["quantity"],
+                  "debit": (float(order["price"] or 0)
+                            * int(order["quantity"] or 0) * 100)}
+        if refusals:
+            record.update({"status": "refused", "refusals": refusals})
+            risk_mod.journal_append(record)
+            continue
+        if previous and previous.get("status") == "submitted" \
+                and previous.get("stop") != args.get("stop") \
+                and previous.get("order_ids"):
+            # a real stop, really moved: modify, don't duplicate
+            reply = _in_process_invoke("ibkr.orders.modify_stop", {
+                "mode": "live",
+                "contract": {"symbol": order["symbol"], "sec_type": "OPT",
+                             "expiration": args.get("expiration"),
+                             "strike": args.get("strike"),
+                             "right": args.get("right")},
+                "order_id": previous["order_ids"].get("stop"),
+                "new_stop_price": float(args.get("stop")),
+                "quantity": order["quantity"],
+                "lease_id": previous.get("lease_id"),
+                "live_confirm": "SUBMIT_REAL_OPTION_ORDER",
+                "option_only_ack": True,
+                "owner": "tick-relay-live"})
+            record.update({"status": "submitted" if reply.get("ok")
+                           else "modify_failed",
+                           "action": "modify_stop",
+                           "engine": str(reply.get("summary"))[:200]})
+            risk_mod.journal_append(record)
+            print(f"live: modify_stop {trade_id} -> "
+                  f"{args.get('stop')} ({record['status']})", flush=True)
+            continue
+        # dry-run unless EVERY layer is on; the engine decides last
+        reply = _in_process_invoke("ibkr.orders.submit_bracket", {
+            "mode": "live",
+            "contract": {"symbol": order["symbol"], "sec_type": "OPT",
+                         "expiration": args.get("expiration"),
+                         "strike": args.get("strike"),
+                         "right": args.get("right")},
+            "entry_price": float(order["price"]),
+            "quantity": int(order["quantity"]),
+            "stop_offset": max(0.05, float(order["price"] or 0)
+                               - float(args.get("stop") or 0))
+            if args.get("stop") else 1.0,
+            "live_confirm": "SUBMIT_REAL_OPTION_ORDER",
+            "option_only_ack": True,
+            "owner": "tick-relay-live"})
+        answer = reply.get("answer") if isinstance(reply.get("answer"),
+                                                   dict) else {}
+        if answer.get("status") == "live_gate_blocked":
+            record.update({"status": "dry_run",
+                           "engine": "live gate blocked — intents "
+                                     "recorded, no broker order"})
+        elif reply.get("ok"):
+            record.update({"status": "submitted",
+                           "order_ids": answer.get("order_ids") or {},
+                           "lease_id": answer.get("lease_id"),
+                           "engine": str(reply.get("summary"))[:200]})
+        else:
+            record.update({"status": "submit_failed",
+                           "engine": str(reply.get("summary"))[:200]})
+        risk_mod.journal_append(record)
+        print(f"live: {order['kind']} {trade_id} {record['status']}",
+              flush=True)
+
+
 def executor():
     gates = _harness_gates()
+    risk_mod = _harness_risk()
+    last_live = 0.0
     brackets = {}
     last_refresh = 0.0
     fired = set()
@@ -239,6 +354,16 @@ def executor():
                                   f"leg crossed — fill captured at "
                                   f"{check['fill']['price']}",
                                   flush=True)
+            if time.time() - last_live >= 5.0 and brackets:
+                last_live = time.time()
+                try:
+                    import datetime as _dt
+                    live_orders(brackets, risk_mod,
+                                _dt.datetime.now(_dt.timezone.utc)
+                                .isoformat(timespec="seconds"))
+                except Exception as error:
+                    print(f"live rail blip: {str(error)[:160]}",
+                          flush=True)
         except Exception as error:
             print(f"executor blip: {str(error)[:160]}", flush=True)
         time.sleep(EXECUTOR_SECONDS)

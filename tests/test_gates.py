@@ -753,3 +753,36 @@ def test_stop_leg_is_sell_only():
         {"symbol": "NVDA", "action": "buy", "price": 2.0,
          "quantity": 1, "stop": 1.0}, "fill_watch")
     assert parsed is None and "sell" in refusal["summary"]
+
+
+def test_risk_layer_refuses_by_name():
+    import risk
+
+    standing = {**risk.DEFAULT_RISK, "live_enabled": True}
+    armed = {"spy-wall-break": {"max_debit": 400}}
+    ok_order = {"trade_id": "spy-wall-break", "kind": "entry",
+                "symbol": "SPY", "sec_type": "OPT", "right": "C",
+                "price": 3.5, "quantity": 1}
+    assert risk.order_refusals(ok_order, standing, armed, []) == []
+
+    assert any("not armed" in r for r in risk.order_refusals(
+        {**ok_order, "trade_id": "rogue"}, standing, armed, []))
+    assert any("whitelist" in r for r in risk.order_refusals(
+        {**ok_order, "symbol": "TSLA"}, standing, armed, []))
+    assert any("OPTIONS ONLY" in r for r in risk.order_refusals(
+        {**ok_order, "sec_type": "STK"}, standing, armed, []))
+    assert any("per-order cap" in r for r in risk.order_refusals(
+        {**ok_order, "price": 9.0}, standing, armed, []))
+    assert any("kill switch" in r for r in risk.order_refusals(
+        ok_order, {**standing, "kill": True}, armed, []))
+    assert any("not enabled" in r for r in risk.order_refusals(
+        ok_order, {**standing, "live_enabled": False}, armed, []))
+
+    journal = [{"trade_id": "spy-wall-break", "kind": "entry",
+                "status": "submitted", "debit": 350}]
+    assert any("duplicate" in r.lower() for r in risk.order_refusals(
+        ok_order, standing, armed, journal))
+    fat_day = [{"trade_id": "x", "kind": "entry", "status": "dry_run",
+                "debit": 700}]
+    assert any("daily debit" in r for r in risk.order_refusals(
+        ok_order, standing, armed, fat_day))
