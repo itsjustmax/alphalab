@@ -312,6 +312,11 @@
     font-size: .8rem; }
   .cockpit-item.clock b { color: var(--warn); }
   .cockpit .countdown { font-family: var(--mono); }
+  .lifecycle { display: flex; align-items: center; gap: .5rem;
+    flex-wrap: wrap; margin-top: .55rem; padding-top: .5rem;
+    border-top: 1px solid var(--border); }
+  .next-step { width: 100%; font-size: .76rem; color: var(--warn);
+    margin-top: .15rem; }
   .thoughts-cell { margin-top: .7rem; background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 12px;
     padding: .7rem .9rem; }
@@ -3003,6 +3008,73 @@ function ownWords(answerKey, submit) {
   return form;
 }
 
+// The trade card is the LIFECYCLE surface: it always shows where the
+// thesis stands and always offers the next step — idea to plan to
+// activation to arming to cycles, no dead ends.
+function tradeLifecycle(key, spec, view) {
+  const id = key.slice(7);
+  const row = el("div", {class: "lifecycle"});
+  const plan = view.context[`plans/${id}`];
+  const armed = liveStatus?.armed?.[id];
+  const liveOn = liveStatus?.live_enabled && liveStatus?.master
+    && !liveStatus?.kill;
+  const cycles = (spec?.executions || []).filter(c => c.exit).length;
+
+  const cockpit = el("button", {type: "button", class: "desk-rename"},
+    "cockpit");
+  cockpit.addEventListener("click", () => openChartModal(key));
+
+  let planChip;
+  let next;
+  if (!plan) {
+    planChip = el("button", {type: "button",
+      class: "state s-plan-create plan-chip"}, "create plan");
+    planChip.addEventListener("click", () => {
+      openChartModal(key);
+      setTimeout(() => document.querySelector(
+        "#overlay-composer input")?.focus(), 900);
+    });
+    next = "next: describe how this trade should be managed";
+  } else if (!plan.program) {
+    planChip = el("span", {class: "state s-plan-requested"},
+      "compiling…");
+    next = "next: the desk is compiling your plan — moments";
+  } else if (plan.status === "draft") {
+    planChip = el("button", {type: "button",
+      class: "state s-plan-draft plan-chip"}, "DRAFT — inspect");
+    planChip.addEventListener("click", () => openPlanModal(id));
+    next = "next: inspect the bot and ACTIVATE it (your press)";
+  } else if (plan.status === "active") {
+    planChip = el("button", {type: "button",
+      class: "state s-plan-active plan-chip"}, "bot ACTIVE");
+    planChip.addEventListener("click", () => openPlanModal(id));
+    if (spec?.state === "open-simulated")
+      next = `bot managing the position (paper)` +
+        (armed ? " · LIVE ARMED" : "");
+    else if (armed && liveOn)
+      next = "bot watching for entry — LIVE ARMED, orders will be real";
+    else if (liveOn)
+      next = "next: arm live in the cockpit — paper cycles run either way";
+    else
+      next = "bot watching for entry (paper) — live switches are off";
+  } else {
+    planChip = el("button", {type: "button",
+      class: `state s-plan-${plan.status} plan-chip`}, plan.status);
+    planChip.addEventListener("click", () => {
+      if (plan.program) openPlanModal(id);
+    });
+    next = plan.status === "paused"
+      ? "next: resume from the inspect modal" : "";
+  }
+  row.append(planChip, cockpit);
+  if (armed) row.append(el("span", {class: "state s-plan-active"},
+    `LIVE ≤$${armed.max_debit}`));
+  if (cycles) row.append(el("span", {class: "muted"},
+    `${cycles} cycle(s) closed`));
+  if (next) row.append(el("div", {class: "next-step"}, next));
+  return row;
+}
+
 function renderTrades(view) {
   const section = el("section", {class: "full"});
   section.append(el("h2", {}, "Trades"));
@@ -3030,6 +3102,7 @@ function renderTrades(view) {
         line.length > 150 ? line.slice(0, 147) + "…" : line));
     }
     card.append(el("div", {class: "face-stats"}, tradeStats(key, spec, view)));
+    card.append(tradeLifecycle(key, spec, view));
     const engine = engineViolations(key, spec);
     if (engine === null) {
       card.append(el("p", {class: "muted"}, "checking the trade contract…"));
