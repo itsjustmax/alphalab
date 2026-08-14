@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -453,7 +453,12 @@
         "plans/*"
       ],
       "talk": 4,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "plan_check",
+        "plan_library",
+        "live_quote"
+      ]
     },
     "steward-check": {
       "description": "one trade's dedicated agent answers a summons",
@@ -473,7 +478,14 @@
         "findings/*"
       ],
       "talk": 6,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "live_quote",
+        "contract_bars",
+        "plan_check",
+        "system_health",
+        "tick_tape"
+      ]
     },
     "narrate-fill": {
       "description": "tell the room about a recorded paper fill",
@@ -499,7 +511,12 @@
         "forms/*"
       ],
       "talk": 4,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "form_check",
+        "live_quote",
+        "options_chain"
+      ]
     },
     "answer-member": {
       "description": "answer the member's question as cells with a caption",
@@ -519,7 +536,17 @@
         "findings/*"
       ],
       "talk": 10,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "live_quote",
+        "daily_bars",
+        "contract_bars",
+        "options_chain",
+        "rss_fetch",
+        "symbol_zones",
+        "quote_snapshot",
+        "spx_gamma"
+      ]
     },
     "open-desk": {
       "description": "birth a new desk from the member's intake",
@@ -571,7 +598,13 @@
         "desk/focus"
       ],
       "talk": 6,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "live_quotes",
+        "system_health",
+        "capabilities",
+        "quote_snapshot"
+      ]
     },
     "process-answers": {
       "description": "act on the member's answers to ask cards",
@@ -613,7 +646,18 @@
         "quotes/*"
       ],
       "talk": 8,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "options_chain",
+        "live_quote",
+        "contract_bars",
+        "daily_bars",
+        "symbol_zones",
+        "rss_fetch",
+        "symbol_research",
+        "implied_move",
+        "short_volume"
+      ]
     },
     "originate": {
       "description": "one sweep for new trade ideas from receipts",
@@ -632,7 +676,16 @@
         "forms/*"
       ],
       "talk": 4,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "rss_fetch",
+        "live_quote",
+        "daily_bars",
+        "spx_gamma",
+        "market_context",
+        "symbol_research",
+        "web_fetch"
+      ]
     },
     "scan-contracts": {
       "description": "pick candidate contracts for one trade from receipts",
@@ -648,7 +701,14 @@
         "trades/*"
       ],
       "talk": 4,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "options_chain",
+        "live_quote",
+        "contract_bars",
+        "quote_snapshot",
+        "implied_move"
+      ]
     },
     "post-mortem": {
       "description": "judge a closed cycle; write the lesson",
@@ -662,7 +722,11 @@
         "findings/*"
       ],
       "talk": 4,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "contract_bars",
+        "daily_bars"
+      ]
     },
     "session-brief": {
       "description": "the pre-open brief the member reads with coffee",
@@ -681,7 +745,14 @@
         "widgets/ask-*"
       ],
       "talk": 4,
-      "model": "sonnet"
+      "model": "sonnet",
+      "tools": [
+        "rss_fetch",
+        "live_quote",
+        "spx_gamma",
+        "market_context",
+        "daily_bars"
+      ]
     },
     "design-surface": {
       "description": "deep design bench: studies, templates, cell redesigns",
@@ -700,7 +771,13 @@
         "cockpit/*"
       ],
       "talk": 6,
-      "model": "fable"
+      "model": "fable",
+      "tools": [
+        "plan_library",
+        "daily_bars",
+        "contract_bars",
+        "symbol_zones"
+      ]
     }
   },
   "flow": {
