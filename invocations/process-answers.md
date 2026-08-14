@@ -14,3 +14,7 @@ For each answer, in order:
 
 An answer you cannot act on (out of scope, contradicts a gate) is
 reported in `say` with the exact reason — never silently dropped.
+
+HANDOFF: a decision that advances a trade lands where its next lane
+expects it (forms for staging, the trade entry for direction); the
+retired ask card closes the loop. Never leave an answer half-acted.

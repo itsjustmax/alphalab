@@ -18,3 +18,8 @@ the whole desk surface. In priority order:
 Write only what changed; an unchanged desk with an honest "all quiet,
 streams live, next check at HH:MM" in `say` is a good turn. Never touch
 plan status, fills, executions, or another lane's job.
+
+HANDOFF: plan problems → the compile-plan and steward lanes (never
+yours); new ideas → originate's next sweep; a cell worth redesigning
+→ note it for the design bench. Leave the desk so the next lane
+finds nothing orphaned.

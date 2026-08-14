@@ -44,3 +44,8 @@ Keep the code near this shape unless the member's words demand more.
 Preserve every other field of the plan entry exactly as it is — you are
 filling in `program` and moving status to "draft", nothing else. Never
 write status "active": activation is the member's press alone.
+
+HANDOFF: the member inspects and activates the draft — their press
+alone. The runner executes it deterministically; the steward lane
+inherits its summons and errors. Encode lessons from post-mortem
+findings where the member's words allow.

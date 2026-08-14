@@ -12,3 +12,7 @@ change, make the change within your write scope and say what changed.
 If it needs judgment only, answer in `say` — one or two sentences,
 clocks with claims, failures named. Never pretend a change you did not
 make.
+
+HANDOFF: cells you write are kept fresh by their refresh programs;
+if the question exposed a missing surface, name it so the design
+bench can build it once.

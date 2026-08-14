@@ -19,3 +19,8 @@ Do, in order:
 Never touch another trade's keys. Never write status "active", a fill,
 or an execution record. If the data you need is not in your slice, say
 exactly what is missing rather than guessing.
+
+HANDOFF: fixes you cannot make inside your scope go to the room
+with the exact lane or press that can (a plan edit → draft for
+re-inspection; an arming decision → the member). A steward turn
+ends with the trade in a known state, never a mystery.

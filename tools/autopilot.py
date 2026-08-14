@@ -824,7 +824,8 @@ class Pilot:
                         "POST",
                         f"/environments/{self.environment}/context",
                         {"key": trigger_key,
-                         "value": {"reason": f"plan error: {error}",
+                         "value": {"kind": "error", "trade_id": trade_id,
+                                   "reason": f"plan error: {error}",
                                    "from": "runner",
                                    "at": now.isoformat(
                                        timespec="seconds")}})
@@ -907,7 +908,8 @@ class Pilot:
                 return  # already summoned; one look at a time
             self._api("POST", f"/environments/{self.environment}/context",
                       {"key": trigger_key,
-                       "value": {"reason": str(action.get("reason")),
+                       "value": {"kind": "summon", "trade_id": trade_id,
+                                 "reason": str(action.get("reason")),
                                  "from": "bot",
                                  "at": update.get("last_run")}})
             print(f"[{utc_now():%H:%M:%S}] plan {trade_id}: steward "
@@ -1243,6 +1245,17 @@ class Pilot:
             fills = self.state.setdefault("unnarrated_fills", [])
             if recording["case_key"] not in fills:
                 fills.append(recording["case_key"])
+            if getattr(self, "flow_mode", False):
+                trade_id = recording["case_key"][len("trades/"):]
+                kind = ("cycle-closed" if recording["case"].get("state")
+                        in ("closed", "watching") and recording["case"]
+                        .get("exit") else "fill")
+                self._api("POST",
+                          f"/environments/{self.environment}/context",
+                          {"key": f"triggers/{trade_id}-{kind}",
+                           "value": {"kind": kind, "trade_id": trade_id,
+                                     "at": now.isoformat(
+                                         timespec="seconds")}})
             stream_args = recording.get("stream_args") or (
                 ((context.get(recording["card_key"]) or {})
                  .get("refresh") or {}).get("args") or {})
@@ -1274,6 +1287,8 @@ class Pilot:
         roll_date(self.state, now)
         view = self._api("GET", f"/environments/{self.environment}")
         context = view.get("context") or {}
+        # set before the deterministic passes: event emission reads it
+        self.flow_mode = bool(view.get("flow"))
         self.apply_forms(context, now)
         audited = self.audit(context, now)
         if audited:
@@ -1284,6 +1299,10 @@ class Pilot:
         self.compute_overlays(context, now)
         self.stream_health(context, now)
         self.last_holders = stream_holders(context)
+        if self.flow_mode:
+            self.state["unnarrated_fills"] = []
+            self._save()
+            return "flow", "the platform flow routes this desk's turns"
         action, reason = decide(context, self.state, now, self.budget)
         steward_model = None
         invocation = None  # (name, args) — the scoped touchpoint, if one fits

@@ -21,3 +21,7 @@ Do NOT stage trades, write plans, or invent findings at birth — trades
 come later from receipts, through their own lanes. If intake is empty
 or unclear, build the minimal desk (brief + next_check) and ask in
 `say` what the member wants watched.
+
+HANDOFF: maintain-desk keeps what you built alive; originate brings
+the first ideas; the member's rules editor sets the house rules. Your
+say tells the member the desk is live and what happens next.

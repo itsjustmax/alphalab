@@ -222,6 +222,39 @@ def test_an_exit_order_closes_an_open_case():
     assert autopilot.supported_orders(context, RTH) == []
 
 
+def test_flow_mode_emits_events_instead_of_dispatching(tmp_path):
+    """With a platform flow on the harness, the pilot writes EVENT
+    entries (kind-tagged triggers) and never fires builds itself."""
+
+    pilot = autopilot.Pilot("http://x", "t", "env", 36,
+                            str(tmp_path / "state.json"))
+    open_case = {**WATCHING_CASE, "state": "open-simulated",
+                 "fill": {"contract": "NVDA 20260814 190C", "price": 3.5,
+                          "bid": 3.4, "ask": 3.5, "quantity": 2,
+                          "observed_at": "2026-08-11T14:00:00-04:00"}}
+    context = {"widgets/fill-nvda-190c-exit": make_order(),
+               "trades/nvda-190c": open_case,
+               "intake/watchlist": "NVDA"}
+    calls = []
+
+    def api(method, path, body=None):
+        calls.append((method, path, body))
+        if method == "GET":
+            return {"context": context, "flow": 11}
+        if path.endswith("/context") and body:
+            context[body["key"]] = body["value"]
+        return {}
+
+    pilot._api = api
+    pilot._save = lambda: None
+    action, _ = pilot.tick(RTH)
+    assert action == "flow"
+    assert not any("/build" in c[1] or "/invoke" in c[1] for c in calls)
+    event = context.get("triggers/nvda-190c-cycle-closed")
+    assert event and event["kind"] == "cycle-closed"
+    assert event["trade_id"] == "nvda-190c"
+
+
 def test_a_recorded_fill_earns_a_narration_turn():
     settled = state(last_turn="2026-08-12T18:05:00+00:00",
                     unnarrated_fills=["trades/nvda-190c"])

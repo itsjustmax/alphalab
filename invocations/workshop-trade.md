@@ -19,3 +19,7 @@ NEVER stage entries, write fills, or touch plan status from the
 workshop — the member advances the trade when ready. Answer in `say`
 like a colleague at the next screen: what you found, what you wrote,
 what you would look at next.
+
+HANDOFF: when the member is ready, stage-trade or their own press
+advances the idea; scan-contracts picks strikes from receipts you
+brought. The workshop never advances the trade itself.

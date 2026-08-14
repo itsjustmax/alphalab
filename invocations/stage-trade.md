@@ -12,3 +12,8 @@ names the driver and its clock. The invalidation is a price or event
 that would prove the idea wrong, stated so a program could check it.
 If your slice holds no receipt that supports a contract, write no card
 and say exactly what receipt is missing.
+
+HANDOFF: the desk expands your form into the trade; scan-contracts
+or the workshop picks strikes; compile-plan comes when the member
+asks for management. A form you cannot support with receipts is not
+staged — say what is missing instead.

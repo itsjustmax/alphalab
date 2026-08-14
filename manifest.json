@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.34.0",
+  "version": "3.0.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -451,7 +451,8 @@
       "writes": [
         "plans/*"
       ],
-      "talk": 4
+      "talk": 4,
+      "model": "sonnet"
     },
     "steward-check": {
       "description": "one trade's dedicated agent answers a summons",
@@ -470,7 +471,8 @@
         "plans/*",
         "findings/*"
       ],
-      "talk": 6
+      "talk": 6,
+      "model": "sonnet"
     },
     "narrate-fill": {
       "description": "tell the room about a recorded paper fill",
@@ -480,7 +482,8 @@
         "plans/*"
       ],
       "writes": [],
-      "talk": 4
+      "talk": 4,
+      "model": "qwen30"
     },
     "stage-trade": {
       "description": "stage one trade idea through the forms lane",
@@ -494,7 +497,8 @@
       "writes": [
         "forms/*"
       ],
-      "talk": 4
+      "talk": 4,
+      "model": "sonnet"
     },
     "answer-member": {
       "description": "answer the member's question as cells with a caption",
@@ -513,7 +517,8 @@
         "overlays/*",
         "findings/*"
       ],
-      "talk": 10
+      "talk": 10,
+      "model": "sonnet"
     },
     "open-desk": {
       "description": "birth a new desk from the member's intake",
@@ -533,7 +538,8 @@
         "desk/next_check",
         "desk/focus"
       ],
-      "talk": 4
+      "talk": 4,
+      "model": "sonnet"
     },
     "maintain-desk": {
       "description": "quiet turn: streams, audit, funnel, pruning, clock",
@@ -563,7 +569,8 @@
         "desk/next_check",
         "desk/focus"
       ],
-      "talk": 6
+      "talk": 6,
+      "model": "sonnet"
     },
     "process-answers": {
       "description": "act on the member's answers to ask cards",
@@ -583,7 +590,8 @@
         "findings/*",
         "desk/next_check"
       ],
-      "talk": 6
+      "talk": 6,
+      "model": "sonnet"
     },
     "workshop-trade": {
       "description": "build one trade with the member in its cockpit",
@@ -603,7 +611,194 @@
         "findings/*",
         "quotes/*"
       ],
-      "talk": 8
+      "talk": 8,
+      "model": "sonnet"
+    },
+    "originate": {
+      "description": "one sweep for new trade ideas from receipts",
+      "spec": "invocations/originate.md",
+      "select": [
+        "widgets/news*",
+        "widgets/*",
+        "findings/*",
+        "quotes/*",
+        "trades/*",
+        "watchlist",
+        "topic"
+      ],
+      "writes": [
+        "findings/*",
+        "forms/*"
+      ],
+      "talk": 4,
+      "model": "sonnet"
+    },
+    "scan-contracts": {
+      "description": "pick candidate contracts for one trade from receipts",
+      "spec": "invocations/scan-contracts.md",
+      "select": [
+        "trades/*",
+        "cockpit/*",
+        "quotes/*",
+        "findings/*"
+      ],
+      "writes": [
+        "cockpit/*",
+        "trades/*"
+      ],
+      "talk": 4,
+      "model": "sonnet"
+    },
+    "post-mortem": {
+      "description": "judge a closed cycle; write the lesson",
+      "spec": "invocations/post-mortem.md",
+      "select": [
+        "trades/*",
+        "plans/*",
+        "findings/*"
+      ],
+      "writes": [
+        "findings/*"
+      ],
+      "talk": 4,
+      "model": "sonnet"
+    },
+    "session-brief": {
+      "description": "the pre-open brief the member reads with coffee",
+      "spec": "invocations/session-brief.md",
+      "select": [
+        "trades/*",
+        "plans/*",
+        "widgets/*",
+        "findings/*",
+        "quotes/*",
+        "desk/*",
+        "watchlist"
+      ],
+      "writes": [
+        "widgets/brief",
+        "widgets/ask-*"
+      ],
+      "talk": 4,
+      "model": "sonnet"
+    },
+    "design-surface": {
+      "description": "deep design bench: studies, templates, cell redesigns",
+      "spec": "invocations/design-surface.md",
+      "select": [
+        "studies/*",
+        "templates/*",
+        "widgets/*",
+        "cockpit/*",
+        "trades/*"
+      ],
+      "writes": [
+        "studies/*",
+        "templates/*",
+        "widgets/*",
+        "cockpit/*"
+      ],
+      "talk": 6,
+      "model": "fable"
     }
+  },
+  "flow": {
+    "guards": {
+      "min_gap_minutes": 5,
+      "budget_per_day": 36
+    },
+    "tracks": [
+      {
+        "on": "triggers/*",
+        "where": {
+          "kind": "summon"
+        },
+        "invoke": "steward-check",
+        "retire": true,
+        "args": {
+          "trade_id": "$value.trade_id",
+          "reason": "$value.reason",
+          "summoned_by": "$value.from"
+        }
+      },
+      {
+        "on": "triggers/*",
+        "where": {
+          "kind": "error"
+        },
+        "invoke": "steward-check",
+        "retire": true,
+        "args": {
+          "trade_id": "$value.trade_id",
+          "reason": "$value.reason",
+          "summoned_by": "runner"
+        }
+      },
+      {
+        "on": "triggers/*",
+        "where": {
+          "kind": "fill"
+        },
+        "invoke": "narrate-fill",
+        "retire": true,
+        "args": {
+          "trade_id": "$value.trade_id"
+        }
+      },
+      {
+        "on": "triggers/*",
+        "where": {
+          "kind": "cycle-closed"
+        },
+        "invoke": "post-mortem",
+        "retire": true,
+        "args": {
+          "trade_id": "$value.trade_id"
+        }
+      },
+      {
+        "on": "plans/*",
+        "where": {
+          "status": "requested"
+        },
+        "invoke": "compile-plan",
+        "cooldown_minutes": 30,
+        "args": {
+          "trade_id": "$suffix"
+        }
+      },
+      {
+        "on": "answers/*",
+        "invoke": "process-answers",
+        "args": {
+          "answers": "$key"
+        }
+      },
+      {
+        "on": "intake/*",
+        "invoke": "open-desk",
+        "once": true
+      },
+      {
+        "daily_at": "12:45",
+        "invoke": "session-brief"
+      },
+      {
+        "daily_at": "11:30",
+        "invoke": "originate"
+      },
+      {
+        "every_minutes": 45,
+        "between": [
+          "11:00",
+          "21:30"
+        ],
+        "invoke": "maintain-desk"
+      },
+      {
+        "every_minutes": 240,
+        "invoke": "maintain-desk"
+      }
+    ]
   }
 }
