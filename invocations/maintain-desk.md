@@ -12,8 +12,10 @@ the whole desk surface. In priority order:
 4. Prune: cells nobody needs anymore are retired, not accumulated.
    The member's `desk/hidden` is feedback — treat hidden cells as
    candidates for retirement.
-5. Set `desk/next_check` (>= 10 minutes out) and `desk/focus` for the
-   next turn.
+5. Schedule your own next look: write `agenda/<id>` {"at": an
+   ISO-8601 clock >= 10 minutes out, "invoke": "maintain-desk",
+   "note": what that turn should look at first}. The note is how
+   your focus survives to the next turn.
 
 Write only what changed; an unchanged desk with an honest "all quiet,
 streams live, next check at HH:MM" in `say` is a good turn. Never touch

@@ -16,6 +16,10 @@ Do, in order:
    you changed, and what needs the member — even when the answer is
    "all factors intact, no action".
 
+If the situation deserves a follow-up look (a level being tested,
+data arriving later), schedule it: `agenda/<id>` {"at": ..., "invoke": "steward-check", "args": {"trade_id": ...}, "note":
+what to check}. Sequence the watch; do not hold the turn open.
+
 Never touch another trade's keys. Never write status "active", a fill,
 or an execution record. If the data you need is not in your slice, say
 exactly what is missing rather than guessing.

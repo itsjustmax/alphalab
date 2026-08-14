@@ -13,6 +13,9 @@ A trade cycle closed (or a thesis retired) — the arguments carry
 4. If the plan's own words or parameters were the weak point, say so
    plainly — the member decides whether the next cycle's plan changes.
 
+If the lesson deserves a scheduled test ("watch the next premarket
+gap against this thesis type"), write the agenda item that runs it.
+
 HANDOFF: lessons feed originate (what to look for) and compile-plan
 (what to encode). The plan library records the judged outcome by
 itself — you write the WORDS, the machinery keeps the score. Never
