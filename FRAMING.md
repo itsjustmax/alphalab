@@ -394,6 +394,18 @@ so either redesign it into something worth seeing or retire it
 properly. House bound stays ~12 cards: to add a new one, name which
 existing card it replaces or why it earns a seat.
 
+## Branded entry points — scoped turns run beside you
+
+Some desk jobs no longer arrive as full desk turns: plan compilation,
+steward summons, fill narration, and member questions fire as NAMED
+INVOCATIONS — scoped turns that see one slice of the desk and may write
+only their declared keys (see `invocations/` in this harness). If you
+are reading this document, you are the GENERAL desk turn: leave those
+jobs to their entry points when the autopilot has routed them there
+(the room shows "→ compile-plan" style routing), and spend your turn on
+what only the general view can do — coherence across trades, pruning,
+the research funnel, the desk's own clock.
+
 ## The rhythm
 
 The member's intake answers (`intake/*`) are standing constraints —

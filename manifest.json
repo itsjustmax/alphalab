@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.32.0",
+  "version": "2.33.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -19,7 +19,7 @@
     "widgets/brief": "the pinned Today card: what the desk is doing and what needs eyes",
     "trades/": "one key per trade: {contracts: [1-5 exact contracts], thesis, evidence: [context keys], invalidation, state: idea|watching|open-simulated|closed, fill, exit, as_of}. invalidation is always written. fill stays null until the market gate passes — the autopilot records a supported order's exact receipt block {contract, price, bid, ask, quantity, observed_at}; agents never write fill blocks and carry existing ones through unchanged. exit: same shape. executions: the cycle history [{contract, entry, exit, opened_at, closed_at}] — a trade is a THESIS that persists through exits while its member-activated bot runs (state returns to watching); retire closes it. The audit (desk/audit) verdicts every trade after each change.",
     "forms/": "minimal fields the desk expands into finished cells: forms/trade/<id> {contracts, thesis, invalidation} → trades/<id>; forms/<id> {template, ...fields} → the template's cell. Problems come back as `errors` on the form itself; revise and set retry: true.",
-    "studies/": "the desk's chart-study library, plugins/<slug>: {label, describe, appliesTo: contract|underlying|tape|both, overlay: {levels/bands/clocks} | program: {inputs, code} + minutes; program args may carry {\"$\": \"symbol\"}-style placeholders filled per trade}. Designed once when the member presses \uFF0B on a cockpit pane; applying instantiates overlays/<trade>-lib-<slug>",
+    "studies/": "the desk's chart-study library, plugins/<slug>: {label, describe, appliesTo: contract|underlying|tape|both, overlay: {levels/bands/clocks} | program: {inputs, code} + minutes; program args may carry {\"$\": \"symbol\"}-style placeholders filled per trade}. Designed once when the member presses ＋ on a cockpit pane; applying instantiates overlays/<trade>-lib-<slug>",
     "overlays/": "chart overlays for one trade's cockpit, overlays/<trade-id>-<slug>: {target: contract|underlying, levels: [{price, label}], bands: [{lower, upper, label, side}], clocks: [{at, label}]} — pure data rendered by the cockpit's custom plugin. COMPUTED overlays add program {inputs: [read-only tool reads], code: 'def compute(inputs): return {...}'} + minutes: the runner executes on cadence (restricted namespace, validated output, errors land as last_error). Retire when the moment passes",
     "cockpit/": "one trade's own cells at cockpit/<trade-id>/<slug> — the desk card grammar, rendered inside that trade's cockpit modal: candidate contracts' live quotes, comparison tables, custom_d3, news",
     "framing/": "house rules, framing/<slug>: plain text (or {text}) — this desk's standing amendments to the harness framing, appended to every agent prompt; where they conflict, the house rule wins. MEMBER-ONLY: written in the UI rules editor; agents never write these.",
@@ -438,5 +438,82 @@
       ],
       "placeholder": "or say it your way…"
     }
-  ]
+  ],
+  "invocations": {
+    "compile-plan": {
+      "description": "compile one requested management plan into a draft bot",
+      "spec": "invocations/compile-plan.md",
+      "select": [
+        "trades/*",
+        "plans/*",
+        "quotes/*"
+      ],
+      "writes": [
+        "plans/*"
+      ],
+      "talk": 4
+    },
+    "steward-check": {
+      "description": "one trade's dedicated agent answers a summons",
+      "spec": "invocations/steward-check.md",
+      "select": [
+        "trades/*",
+        "plans/*",
+        "desk/streams",
+        "cockpit/*",
+        "overlays/*",
+        "quotes/*"
+      ],
+      "writes": [
+        "cockpit/*",
+        "overlays/*",
+        "plans/*",
+        "findings/*"
+      ],
+      "talk": 6
+    },
+    "narrate-fill": {
+      "description": "tell the room about a recorded paper fill",
+      "spec": "invocations/narrate-fill.md",
+      "select": [
+        "trades/*",
+        "plans/*"
+      ],
+      "writes": [],
+      "talk": 4
+    },
+    "stage-trade": {
+      "description": "stage one trade idea through the forms lane",
+      "spec": "invocations/stage-trade.md",
+      "select": [
+        "quotes/*",
+        "findings/*",
+        "widgets/news*",
+        "trades/*"
+      ],
+      "writes": [
+        "forms/*"
+      ],
+      "talk": 4
+    },
+    "answer-member": {
+      "description": "answer the member's question as cells with a caption",
+      "spec": "invocations/answer-member.md",
+      "select": [
+        "trades/*",
+        "plans/*",
+        "widgets/*",
+        "findings/*",
+        "desk/*",
+        "quotes/*"
+      ],
+      "writes": [
+        "widgets/*",
+        "cockpit/*",
+        "overlays/*",
+        "findings/*"
+      ],
+      "talk": 10
+    }
+  }
 }

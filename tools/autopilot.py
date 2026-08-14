@@ -1286,6 +1286,16 @@ class Pilot:
         self.last_holders = stream_holders(context)
         action, reason = decide(context, self.state, now, self.budget)
         steward_model = None
+        invocation = None  # (name, args) — the scoped touchpoint, if one fits
+        if action == "build" and reason.startswith("plan awaiting compilation"):
+            requested = pending_plan_requests(context)
+            if requested:
+                invocation = ("compile-plan",
+                              {"trade_id": requested[0][len("plans/"):]})
+        if action == "build" and reason.startswith("paper fill recorded"):
+            fills = sorted(set(self.state.get("unnarrated_fills") or []))
+            if fills:
+                invocation = ("narrate-fill", {"trade_id": fills[0]})
         if action == "build" and reason.startswith("steward summoned"):
             # charge the steward before the turn, then retire the
             # trigger — the turn reads its charge in the conversation
@@ -1296,6 +1306,10 @@ class Pilot:
                 steward = ((context.get(f"plans/{trade_id}") or {})
                            .get("steward")) or {}
                 steward_model = steward.get("model") or steward_model
+                invocation = ("steward-check",
+                              {"trade_id": trade_id,
+                               "reason": str(trigger.get("reason")),
+                               "summoned_by": trigger.get("from", "bot")})
                 self._api(
                     "POST", f"/environments/{self.environment}/say",
                     {"as": "desk", "text": f"STEWARD TURN — trades/{trade_id}: "
@@ -1309,8 +1323,24 @@ class Pilot:
                     {"key": key, "value": None})
         if action == "build":
             chosen = steward_model or self.model
-            self._api("POST", f"/environments/{self.environment}/build",
-                      {"model": chosen} if chosen else {})
+            fired = False
+            if invocation:
+                # the branded entry point: scoped context, scoped writes
+                name, args = invocation
+                try:
+                    self._api(
+                        "POST",
+                        f"/environments/{self.environment}/invoke",
+                        {"name": name, "args": args,
+                         **({"model": chosen} if chosen else {})})
+                    fired = True
+                    reason = f"{reason} → {name}"
+                except Exception:
+                    pass  # platform predates invoke, or no such
+                          # invocation — the generic build still works
+            if not fired:
+                self._api("POST", f"/environments/{self.environment}/build",
+                          {"model": chosen} if chosen else {})
             self.state["last_turn"] = now.isoformat(timespec="seconds")
             self.state["builds_today"] = self.state.get("builds_today", 0) + 1
             self.state["seen_answers"] = sorted(

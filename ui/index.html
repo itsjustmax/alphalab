@@ -867,7 +867,15 @@ document.getElementById("focus-to-desk").addEventListener("click",
       {text: `About ${focusKey}: ${text}`});
     await markMemberTurn();
     const model = chosenModel("ask");
-    await api("POST", `/environments/${envId}/build`, model ? {model} : {});
+    try {
+      // the branded entry point: scoped context, scoped writes
+      await api("POST", `/environments/${envId}/invoke`,
+        {name: "answer-member",
+         args: {question: `About ${focusKey}: ${text}`},
+         ...(model ? {model} : {})});
+    } catch (error) {
+      await api("POST", `/environments/${envId}/build`, model ? {model} : {});
+    }
     turnActive = true;
     turnStarted = Date.now();
     updateLiveness();
