@@ -358,6 +358,14 @@
   .custom-frame { width: 100%; border: none; border-radius: 8px;
                   background: transparent; }
 
+  .agenda-list { display: flex; flex-direction: column; gap: .35rem; }
+  .agenda-row { display: flex; gap: .7rem; align-items: baseline;
+    background: var(--card, rgba(125,125,125,.06));
+    border-radius: 8px; padding: .45rem .7rem; font-size: .85rem; }
+  .agenda-row b { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .agenda-note { color: var(--muted); flex: 1; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .agenda-row:hover .agenda-note { white-space: normal; }
   .turn-receipt { margin-top: 4px; font-size: 11px; color: var(--muted);
     display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
   .receipt-key { background: var(--chip, rgba(125,125,125,.12));
@@ -1029,6 +1037,7 @@ function render(view) {
   container.replaceChildren();
   for (const section of [
     renderWatchlist(view),
+    renderAgenda(view),
     renderTrades(view),
     renderWidgets(view),
     renderFindings(view),
@@ -3983,6 +3992,39 @@ function turnReceipt(turn, previousTurn) {
     .map(entry => entry.key))];
   keys.sort();
   return keys;
+}
+
+// The desk's day plan: agenda items the lanes scheduled for
+// themselves — the member sees what the desk intends and can cancel.
+function renderAgenda(view) {
+  const items = Object.entries(view.context)
+    .filter(([key, value]) => key.startsWith("agenda/") && value)
+    .sort(([, a], [, b]) =>
+      String(a.at === "now" ? "" : a.at).localeCompare(
+        String(b.at === "now" ? "" : b.at)));
+  if (!items.length) return null;
+  const section = el("section");
+  section.append(el("h2", {}, "The desk's day plan"));
+  const list = el("div", {class: "agenda-list"});
+  for (const [key, item] of items) {
+    const row = el("div", {class: "agenda-row"});
+    const when = item.at === "now" ? "next free moment"
+      : new Date(item.at).toLocaleTimeString("en-US",
+          {timeZone: "America/New_York", hour: "numeric",
+           minute: "2-digit"}) + " ET";
+    row.append(el("b", {}, when),
+      el("span", {class: "state s-plan-requested"}, item.invoke),
+      el("span", {class: "agenda-note"}, String(item.note || "")));
+    const drop = el("button", {type: "button", class: "desk-rename",
+      title: "cancel this scheduled turn"}, "✕");
+    drop.addEventListener("click", () =>
+      api("POST", `/environments/${envId}/context`,
+        {key, value: null}).then(refresh));
+    row.append(drop);
+    list.append(row);
+  }
+  section.append(list);
+  return section;
 }
 
 function renderConversation(view) {
