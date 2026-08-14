@@ -1287,6 +1287,17 @@ class Pilot:
         action, reason = decide(context, self.state, now, self.budget)
         steward_model = None
         invocation = None  # (name, args) — the scoped touchpoint, if one fits
+        if action == "build" and reason == "first turn on this desk":
+            invocation = ("open-desk", {})
+        if action == "build" and reason.startswith("answer landed"):
+            answered = sorted(
+                k for k in context if k.startswith("answers/")
+                and k not in set(self.state.get("seen_answers") or []))
+            invocation = ("process-answers", {"answers": answered})
+        if action == "build" and (
+                reason.startswith("quiet-period maintenance")
+                or reason == "the desk's own next-check clock came due"):
+            invocation = ("maintain-desk", {"reason": reason})
         if action == "build" and reason.startswith("plan awaiting compilation"):
             requested = pending_plan_requests(context)
             if requested:

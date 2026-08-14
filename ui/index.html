@@ -919,7 +919,7 @@ const composerReady = new Promise((resolve, reject) => {
 }).then(() => {
   const form = Manifold.composer({
     mount: document.getElementById("askdesk-mount"),
-    envId, token, scope: "ask",
+    envId, token, scope: "ask", invoke: "answer-member",
     placeholder: "Tell the desk what to do — “build a case on NVDA into " +
       "earnings”, “chart SPX against its gamma pin”, “what changed today?”",
   });
@@ -2395,6 +2395,12 @@ function renderChartModal() {
     mount.id = "overlay-composer";
     Manifold.composer({
       mount, envId, token, scope: "overlay",
+      invoke: "workshop-trade",
+      invokeArgs: text => ({
+        trade_id: state.tradeKey.slice(7),
+        ask: text,
+        cockpit_brief: cockpitBrief(meta, state),
+      }),
       prelude: "CURRENT COCKPIT (the member's live picture):\n" +
         cockpitBrief(meta, state) +
         ((lastView?.context?.[state.tradeKey]?.state === "idea"

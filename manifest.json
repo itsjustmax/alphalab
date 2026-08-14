@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "2.33.0",
+  "version": "2.34.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -514,6 +514,96 @@
         "findings/*"
       ],
       "talk": 10
+    },
+    "open-desk": {
+      "description": "birth a new desk from the member's intake",
+      "spec": "invocations/open-desk.md",
+      "select": [
+        "intake/*",
+        "watchlist",
+        "topic",
+        "widgets/*",
+        "quotes/*"
+      ],
+      "writes": [
+        "watchlist",
+        "topic",
+        "quotes/*",
+        "widgets/*",
+        "desk/next_check",
+        "desk/focus"
+      ],
+      "talk": 4
+    },
+    "maintain-desk": {
+      "description": "quiet turn: streams, audit, funnel, pruning, clock",
+      "spec": "invocations/maintain-desk.md",
+      "select": [
+        "watchlist",
+        "topic",
+        "quotes/*",
+        "widgets/*",
+        "findings/*",
+        "trades/*",
+        "desk/*",
+        "cockpit/*",
+        "overlays/*",
+        "studies/*"
+      ],
+      "writes": [
+        "watchlist",
+        "quotes/*",
+        "widgets/*",
+        "findings/*",
+        "trades/*",
+        "forms/*",
+        "cockpit/*",
+        "overlays/*",
+        "studies/*",
+        "desk/next_check",
+        "desk/focus"
+      ],
+      "talk": 6
+    },
+    "process-answers": {
+      "description": "act on the member's answers to ask cards",
+      "spec": "invocations/process-answers.md",
+      "select": [
+        "answers/*",
+        "widgets/*",
+        "trades/*",
+        "plans/*",
+        "findings/*",
+        "quotes/*"
+      ],
+      "writes": [
+        "widgets/*",
+        "trades/*",
+        "forms/*",
+        "findings/*",
+        "desk/next_check"
+      ],
+      "talk": 6
+    },
+    "workshop-trade": {
+      "description": "build one trade with the member in its cockpit",
+      "spec": "invocations/workshop-trade.md",
+      "select": [
+        "trades/*",
+        "cockpit/*",
+        "overlays/*",
+        "quotes/*",
+        "findings/*",
+        "plans/*"
+      ],
+      "writes": [
+        "cockpit/*",
+        "trades/*",
+        "overlays/*",
+        "findings/*",
+        "quotes/*"
+      ],
+      "talk": 8
     }
   }
 }
