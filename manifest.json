@@ -1,7 +1,7 @@
 {
   "slug": "alphalab",
   "name": "AlphaLab",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "context_keys": {
     "topic": "what the desk is focused on right now",
     "watchlist": "a list of symbols under active attention; the desk renders a live closes strip from it",
@@ -800,5 +800,25 @@
         "invoke": "maintain-desk"
       }
     ]
-  }
+  },
+  "engines": [
+    {
+      "name": "autopilot",
+      "command": [
+        "python3",
+        "tools/autopilot.py",
+        "--budget",
+        "36",
+        "--model",
+        "sonnet"
+      ]
+    },
+    {
+      "name": "tick-relay",
+      "command": [
+        "python3",
+        "tools/relay_launcher.py"
+      ]
+    }
+  ]
 }

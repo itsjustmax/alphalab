@@ -1465,8 +1465,10 @@ class Fleet:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--url", required=True)
-    parser.add_argument("--token", required=True)
+    # the Manifold runtime supervises this engine and provides both in
+    # the environment; flags still win for hand runs
+    parser.add_argument("--url", default=os.environ.get("MANIFOLD_URL"))
+    parser.add_argument("--token", default=os.environ.get("MANIFOLD_TOKEN"))
     parser.add_argument("--environment", default=None,
                         help="pin to one environment; omit to serve every "
                              "desk running this harness")
@@ -1480,6 +1482,8 @@ def main():
     parser.add_argument("--model", default="sonnet",
                         help="model id for scheduled turns (see GET /models)")
     arguments = parser.parse_args()
+    if not arguments.url or not arguments.token:
+        parser.error("need --url/--token or MANIFOLD_URL/MANIFOLD_TOKEN")
     os.makedirs(arguments.state_dir, exist_ok=True)
     fleet = Fleet(arguments.url, arguments.token, arguments.budget,
                   arguments.state_dir, model=arguments.model,
